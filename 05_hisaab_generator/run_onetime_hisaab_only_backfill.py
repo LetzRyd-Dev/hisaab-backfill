@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import engine
 from safety_guard import PROTECTED_PRODUCTION_WEEKS, SafetyViolationError
 
-DEFAULT_BACKFILL_WEEKS = [f"CY26WK{i:02d}" for i in range(28, 36)]
+DEFAULT_BACKFILL_WEEKS = [f"CY26WK{i:02d}" for i in range(1, 26)] + [f"CY26WK{i:02d}" for i in range(28, 36)]
 
 
 def assert_week_not_protected(week_id: str):
@@ -72,13 +72,18 @@ uber_wk_cnt AS (
 ola_wk_cnt AS (
     SELECT COUNT(*) AS cnt FROM public.core_ola_weekly WHERE week_id = :week_id
 ),
+rent_log_day_cnt AS (
+    SELECT COUNT(DISTINCT drl.log_date) AS day_cnt
+    FROM public.daily_rent_log drl
+    CROSS JOIN week_bounds wb
+    WHERE drl.log_date BETWEEN wb.week_start AND wb.week_end
+),
 missing_rent_dates AS (
     SELECT gs::date AS target_date
     FROM week_bounds wb
+    CROSS JOIN rent_log_day_cnt rldc
     CROSS JOIN LATERAL generate_series(wb.week_start, wb.week_end, '1 day'::interval) gs
-    WHERE NOT EXISTS (
-        SELECT 1 FROM public.daily_rent_log drl WHERE drl.log_date BETWEEN wb.week_start AND wb.week_end
-    )
+    WHERE rldc.day_cnt < 6
 ),
 active_alloc AS (
     SELECT DISTINCT ON (md.target_date, a.vehicle_number)
@@ -476,7 +481,9 @@ unified_daily_rent_log AS (
         d.matched_plan_id
     FROM public.daily_rent_log d
     CROSS JOIN week_bounds wb
+    CROSS JOIN rent_log_day_cnt rldc
     WHERE d.log_date BETWEEN wb.week_start AND wb.week_end
+      AND rldc.day_cnt >= 6
 
     UNION ALL
 
