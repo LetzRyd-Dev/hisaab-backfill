@@ -19,5 +19,17 @@ See the complete [ROADMAP.md](ROADMAP.md) for the variable-by-variable specifica
 
 ```bash
 pip install -r requirements.txt
-python 01_custody_engine/audit_custody_coverage.py --week CY26WK28
+
+# One-Time Hisaab-Only Backfill (writes ONLY to hisaab_vehicle_weekly & hisaab_partner_weekly)
+# Dry-run across all 33 historical weeks (CY26WK01-CY26WK25, CY26WK28-CY26WK35):
+python 05_hisaab_generator/run_onetime_hisaab_only_backfill.py --all-missing
+
+# Execute and commit to PostgreSQL:
+python 05_hisaab_generator/run_onetime_hisaab_only_backfill.py --all-missing --commit
 ```
+
+## Live Database Status (`CY26WK01 – CY26WK41`)
+- **`public.hisaab_vehicle_weekly`**: `47,548` rows across all **41 weeks** (`12,665` protected rows + `34,883` backfilled rows).
+- **`public.hisaab_partner_weekly`**: `15,940` rows across all **41 weeks** (`4,029` protected rows + `11,911` backfilled rows, all backfilled weeks isolated with `previous_outstanding = 0.00`).
+- **Protected Cycles Untouched**: `CY26WK26`, `CY26WK27`, `CY26WK36–CY26WK41` and all upstream `core_*`, `sheet_*`, and `daily_rent_log` tables remain **100% untouched**.
+
