@@ -1,0 +1,5 @@
+partner_id,driver_name,phone,cutoff_date,opening_balance_due,security_deposit_pending
+DRV-BLR-001,Ramesh Kumar,9876543210,2026-10-12,0.00,14999.00
+DRV-HYD-002,Vivek Sharma,9901484683,2026-10-12,1850.50,1000.00
+DRV-MUM-003,Nisamudeen Khan,9140631755,2026-10-12,3200.00,0.00
+OPR-HYD-001,Anurag & RK Fleet Logistics,9691938866,2026-10-12,17650.00,5000.00
