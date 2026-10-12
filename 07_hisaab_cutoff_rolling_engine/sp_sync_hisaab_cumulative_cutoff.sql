@@ -102,10 +102,12 @@ BEGIN
                 WHEN op.opening_balance_due IS NOT NULL THEN op.opening_balance_due
                 
                 -- Priority 2: Post-cutoff cumulative roll-forward from previous week
+                -- (Note: pw.total_outstanding already accounts for payments made in that week:
+                --  total_outstanding = GREATEST(0, (previous_outstanding + current_period_os) - amount_paid_during_week))
                 WHEN v_enable_roll_forward = TRUE 
                      AND pw.total_outstanding IS NOT NULL 
                      AND p_week_id >= v_cutoff_week_id THEN 
-                     GREATEST(0.00, pw.total_outstanding - COALESCE(pw.amount_paid_during_week, 0.00))
+                     GREATEST(0.00, pw.total_outstanding)
                 
                 ELSE 0.00 
             END AS previous_outstanding
