@@ -14,8 +14,10 @@ def run_test():
     print("Testing Cutoff-Based Cumulative Rolling Hisaab Engine")
     print("=================================================================\n")
 
+    import os
+    csv_path = os.path.join(os.path.dirname(__file__), "sample_cutoff_input.csv")
     engine = CumulativeHisaabEngine(cutoff_week_id="CY26WK41")
-    engine.load_cutoff_from_csv("sample_cutoff_input.csv")
+    engine.load_cutoff_from_csv(csv_path)
 
     vivek_id = "DRV-HYD-002"
 
