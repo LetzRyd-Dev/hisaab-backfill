@@ -4,20 +4,15 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Load .env file if available
-env_paths = [
-    Path(__file__).resolve().parent / ".env",
-    Path(__file__).resolve().parent.parent / ".env",
-]
-for ep in env_paths:
-    if ep.exists():
-        with open(ep) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
-        break
+# Load .env file only if locally present in hisaab-backfill
+local_env = Path(__file__).resolve().parent / ".env"
+if local_env.exists():
+    with open(local_env) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
 
 DB_HOST = os.getenv("DB_HOST", "35.200.196.113")
 DB_PORT = os.getenv("DB_PORT", "5432")

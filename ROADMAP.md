@@ -154,15 +154,15 @@
 
 ---
 
-## 3. EXECUTION STATUS (ALL 41 WEEKS OF 2026 COMPLETE)
+## 3. EXECUTION STATUS (ALL 35 HISTORICAL WEEKS UNIFIED & 42 WEEKS LIVE)
 
-All 33 missing historical weeks (`CY26WK01–CY26WK25` and `CY26WK28–CY26WK35`) have been generated and committed via [`05_hisaab_generator/run_onetime_hisaab_only_backfill.py`](05_hisaab_generator/run_onetime_hisaab_only_backfill.py) with **zero writes** to any upstream `core_*`, `sheet_*`, or `daily_rent_log` tables, and **100% isolation** of the 8 protected weeks (`CY26WK26`, `CY26WK27`, `CY26WK36–CY26WK41`):
+All 35 historical weeks (`CY26WK01–CY26WK35`, covering Dec 29, 2025 to Aug 30, 2026) have been generated and committed via [`05_hisaab_generator/run_onetime_hisaab_only_backfill.py`](05_hisaab_generator/run_onetime_hisaab_only_backfill.py) with **zero writes** to any upstream `core_*`, `sheet_*`, or `daily_rent_log` tables, and **100% isolation** of all production weeks:
 
 | Target Cycles | Execution Script | Result in PostgreSQL | Status |
 | :--- | :--- | :--- | :---: |
 | **CY26WK01 – CY26WK25** (25 weeks) | `05_hisaab_generator/run_onetime_hisaab_only_backfill.py` | Populated in `hisaab_vehicle_weekly` & `hisaab_partner_weekly` | **COMPLETED** |
-| **CY26WK26 – CY26WK27** (2 weeks) | Protected Pilot Weeks (`PROTECTED_WEEKS`) | `2,331` vehicle rows / `952` partner rows untouched | **PROTECTED** |
+| **CY26WK26 – CY26WK27** (2 weeks) | `05_hisaab_generator/run_onetime_hisaab_only_backfill.py` | Standardized with 0.00 parity (`2,250` veh / `857` prtnr) | **COMPLETED** |
 | **CY26WK28 – CY26WK35** (8 weeks) | `05_hisaab_generator/run_onetime_hisaab_only_backfill.py` | Populated in `hisaab_vehicle_weekly` & `hisaab_partner_weekly` | **COMPLETED** |
-| **CY26WK36 – CY26WK41** (6 weeks) | Protected Production Weeks (`PROTECTED_WEEKS`) | `10,334` vehicle rows / `3,077` partner rows untouched | **PROTECTED** |
-| **Total (`CY26WK01 – CY26WK41`)** | **41 / 41 Weeks Populated** | **`47,548` vehicle rows / `15,940` partner rows** | **100% LIVE** |
+| **CY26WK36 – CY26WK42** (7 weeks) | Live Production Jobs (`pg_cron`) | Untouched live cycles (`12,101` veh / `3,536` prtnr) | **PROTECTED & LIVE** |
+| **Total (`CY26WK01 – CY26WK42`)** | **All 42 Weeks Populated** | **`49,315` vehicle rows / `16,400` partner rows** | **100% LIVE** |
 

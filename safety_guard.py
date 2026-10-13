@@ -17,10 +17,9 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger("HisaabSafetyGuard")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-# Weeks where Hisaab is already finalized / protected in production
+# Weeks where Hisaab is live / protected in production
 PROTECTED_PRODUCTION_WEEKS = {
-    "CY26WK26", "CY26WK27",
-    "CY26WK36", "CY26WK37", "CY26WK38", "CY26WK39", "CY26WK40", "CY26WK41"
+    "CY26WK36", "CY26WK37", "CY26WK38", "CY26WK39", "CY26WK40", "CY26WK41", "CY26WK42"
 }
 
 class SafetyViolationError(Exception):

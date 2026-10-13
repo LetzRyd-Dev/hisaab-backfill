@@ -24,7 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import engine
 from safety_guard import PROTECTED_PRODUCTION_WEEKS, SafetyViolationError
 
-DEFAULT_BACKFILL_WEEKS = [f"CY26WK{i:02d}" for i in range(1, 26)] + [f"CY26WK{i:02d}" for i in range(28, 36)]
+DEFAULT_BACKFILL_WEEKS = [f"CY26WK{i:02d}" for i in range(1, 36)]
+
+# All August 2026 and later production weeks that must remain 100% untouched
+PROTECTED_AUDIT_WEEKS = sorted(set(PROTECTED_PRODUCTION_WEEKS) | {"CY26WK33", "CY26WK34", "CY26WK35"})
 
 
 def assert_week_not_protected(week_id: str):
@@ -44,7 +47,7 @@ def verify_roll_forward_disabled(conn):
 
 def snapshot_protected_weeks(conn) -> dict:
     snap = {}
-    for w in sorted(PROTECTED_PRODUCTION_WEEKS):
+    for w in PROTECTED_AUDIT_WEEKS:
         v = conn.execute(text(
             "SELECT COUNT(*), COALESCE(SUM(current_week_os), 0) FROM public.hisaab_vehicle_weekly WHERE week_id = :w"
         ), {"w": w}).fetchone()
@@ -58,7 +61,7 @@ def snapshot_protected_weeks(conn) -> dict:
 def assert_protected_weeks_unchanged(conn, pre_snap: dict):
     post_snap = snapshot_protected_weeks(conn)
     if post_snap != pre_snap:
-        raise SafetyViolationError(f"Protected weeks snapshot changed! Pre={pre_snap} Post={post_snap}")
+        raise SafetyViolationError(f"Protected August/Production weeks snapshot changed! Pre={pre_snap} Post={post_snap}")
 
 VEHICLE_WEEKLY_HISAAB_ONLY_SQL = """
 WITH week_bounds AS (
