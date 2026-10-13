@@ -26,40 +26,45 @@ from config import SessionLocal
 from sqlalchemy import text
 
 
-def get_status(week_id: str):
+def get_status(week_id: str = None):
     db = SessionLocal()
     try:
-        row = db.execute(text("""
-            SELECT 
-                week_id,
-                settlement_year,
-                settlement_week,
-                week_start,
-                week_end,
-                lock_cutoff_at,
-                is_locked,
-                locked_at,
-                locked_by,
-                notes
-            FROM public.hisaab_settlement_weeks
-            WHERE week_id = :w;
-        """), {'w': week_id}).fetchone()
+        if week_id:
+            weeks = db.execute(text("""
+                SELECT 
+                    week_id, settlement_year, settlement_week, week_start, week_end,
+                    lock_cutoff_at, is_locked, locked_at, locked_by, notes
+                FROM public.hisaab_settlement_weeks
+                WHERE week_id = :w;
+            """), {'w': week_id}).fetchall()
+        else:
+            weeks = db.execute(text("""
+                SELECT 
+                    week_id, settlement_year, settlement_week, week_start, week_end,
+                    lock_cutoff_at, is_locked, locked_at, locked_by, notes
+                FROM public.hisaab_settlement_weeks
+                ORDER BY week_start DESC
+                LIMIT 5;
+            """)).fetchall()
 
-        if not row:
-            print(f"[ERROR] Week {week_id} not found in public.hisaab_settlement_weeks.")
+        if not weeks:
+            print(f"[ERROR] No settlement weeks found.")
             return
 
-        print("\n" + "=" * 70)
-        print(f"       SETTLEMENT WEEK LOCK STATUS: {week_id}")
-        print("=" * 70)
-        print(f"  Week Dates:       {row[3]} to {row[4]}")
-        print(f"  Lock Cutoff:      {row[5]}")
-        print(f"  Is Locked:        {'LOCKED (IMMUTABLE)' if row[6] else 'OPEN (ACTIVE)'}")
-        if row[6]:
-            print(f"  Locked At:        {row[7]}")
-            print(f"  Locked By:        {row[8]}")
-        print(f"  Audit Notes:      {row[9]}")
-        print("=" * 70 + "\n")
+        print("\n" + "=" * 75)
+        print("                 SETTLEMENT WEEKS LOCK STATUS OVERVIEW")
+        print("=" * 75)
+        for row in weeks:
+            lock_str = "LOCKED (IMMUTABLE)" if row[6] else "OPEN (ACTIVE)"
+            print(f"  Week ID:          {row[0]} | {lock_str}")
+            print(f"  Dates:            {row[3]} to {row[4]}")
+            print(f"  Cutoff:           {row[5]}")
+            if row[6]:
+                print(f"  Locked Info:      At {row[7]} by {row[8]}")
+            if row[9]:
+                print(f"  Notes:            {row[9][:80]}")
+            print("-" * 75)
+        print()
     finally:
         db.close()
 
@@ -113,7 +118,7 @@ def main():
 
     # status
     p_status = subparsers.add_parser("status", help="Check lock status of a week")
-    p_status.add_argument("week_id", help="Week ID (e.g. CY26WK41)")
+    p_status.add_argument("week_id", nargs="?", default=None, help="Week ID (e.g. CY26WK41). If omitted, shows recent weeks.")
 
     # unlock
     p_unlock = subparsers.add_parser("unlock", help="Temporarily unlock a week")

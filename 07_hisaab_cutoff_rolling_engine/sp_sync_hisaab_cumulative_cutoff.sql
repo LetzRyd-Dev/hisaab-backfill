@@ -146,9 +146,10 @@ BEGIN
 
     -- 3. DETERMINE PREVIOUS OUTSTANDING BALANCE:
     --    Priority 1: opening_balance_due overrides previous_outstanding for week 'CY26WK41' (from hisaab_partner_opening_balances).
-    --    Priority 2: For weeks > 'CY26WK41', previous_outstanding rolls forward:
-    --                previous_outstanding = GREATEST(0.00, pw.total_outstanding).
-    --    Otherwise: default to 0.00.
+    --    Priority 2: Immediate week after cutoff (e.g. CY26WK42 where previous week was the cutoff week):
+    --                rolls forward from pw.total_outstanding, or falls back to cutoff opening balance if driver was inactive in week 41.
+    --    Priority 3: Subsequent rolling weeks (CY26WK43+ where previous week > cutoff week):
+    --                rolls strictly from immediate previous week pw.total_outstanding (defaults to 0.00).
     prev_dues AS (
         SELECT 
             ap.partner_id,
@@ -157,11 +158,15 @@ BEGIN
                 WHEN p_week_id = v_cutoff_week_id THEN COALESCE(op.opening_balance_due, 0.00)
                 WHEN op.opening_balance_due IS NOT NULL THEN op.opening_balance_due
                 
-                -- Priority 2: For weeks > 'CY26WK41', previous_outstanding rolls forward:
-                -- If previous week was the cutoff week and had no prior partner row, fallback to cutoff opening balance
+                -- Priority 2: Immediate week after cutoff (where previous week was the cutoff week)
                 WHEN v_enable_roll_forward = TRUE 
-                     AND p_week_id > v_cutoff_week_id THEN 
+                     AND v_prev_week_id = v_cutoff_week_id THEN 
                      GREATEST(0.00, COALESCE(pw.total_outstanding, prev_op.opening_balance_due, 0.00))
+                
+                -- Priority 3: Subsequent rolling weeks (CY26WK43 and beyond)
+                WHEN v_enable_roll_forward = TRUE 
+                     AND v_prev_week_id > v_cutoff_week_id THEN 
+                     GREATEST(0.00, COALESCE(pw.total_outstanding, 0.00))
                 
                 ELSE 0.00 
             END AS previous_outstanding
@@ -172,12 +177,16 @@ BEGIN
             UNION
             SELECT partner_id FROM public.hisaab_partner_opening_balances WHERE effective_week_id = p_week_id
             UNION
-            SELECT partner_id FROM public.hisaab_partner_opening_balances WHERE effective_week_id = v_cutoff_week_id AND v_enable_roll_forward = TRUE
+            SELECT partner_id FROM public.hisaab_partner_opening_balances WHERE effective_week_id = v_cutoff_week_id AND v_enable_roll_forward = TRUE AND v_prev_week_id = v_cutoff_week_id
             UNION
             SELECT partner_id FROM public.hisaab_partner_weekly 
             WHERE v_enable_roll_forward = TRUE 
               AND week_id = v_prev_week_id 
               AND total_outstanding > 0
+            UNION
+            SELECT partner_id FROM public.hisaab_partner_weekly
+            WHERE week_id = p_week_id
+              AND amount_paid_during_week > 0
         ) ap
         LEFT JOIN public.hisaab_partner_opening_balances op 
             ON op.partner_id = ap.partner_id AND op.effective_week_id = p_week_id
@@ -203,6 +212,7 @@ BEGIN
         WHERE previous_outstanding <> 0.00 
            OR partner_id IN (SELECT partner_id FROM veh_summary)
            OR partner_id IN (SELECT partner_id FROM prior_adj)
+           OR partner_id IN (SELECT partner_id FROM existing_payments WHERE amount_paid_during_week > 0)
     )
 
     -- 5. UPSERT into hisaab_partner_weekly

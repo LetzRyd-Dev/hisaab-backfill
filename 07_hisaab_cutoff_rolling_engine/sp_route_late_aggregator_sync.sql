@@ -73,8 +73,9 @@ BEGIN
         LIMIT 1;
 
         IF v_target_week IS NULL THEN
-            -- If no future open week exists yet, fallback to current calendar week
+            -- If no future open week exists yet, fallback to current calendar week and provision it
             v_target_week := 'CY' || to_char(CURRENT_DATE, 'IY') || 'WK' || to_char(CURRENT_DATE, 'IW');
+            PERFORM public.fn_ensure_hisaab_week(v_target_week, CURRENT_DATE);
         END IF;
     ELSE
         -- Original week is still open; can be credited directly
