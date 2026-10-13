@@ -25,9 +25,11 @@ from config import engine
 from safety_guard import PROTECTED_PRODUCTION_WEEKS, SafetyViolationError
 
 DEFAULT_BACKFILL_WEEKS = [f"CY26WK{i:02d}" for i in range(1, 36)]
+WEEKS_2025 = [f"CY25WK{i:02d}" for i in range(1, 53)]
+WEEKS_2026 = [f"CY26WK{i:02d}" for i in range(1, 43)]
 
-# All August 2026 and later production weeks that must remain 100% untouched
-PROTECTED_AUDIT_WEEKS = sorted(set(PROTECTED_PRODUCTION_WEEKS) | {"CY26WK33", "CY26WK34", "CY26WK35"})
+# All 2026 weeks must remain 100% untouched when running historical backfills
+PROTECTED_AUDIT_WEEKS = sorted(set(WEEKS_2026))
 
 
 def assert_week_not_protected(week_id: str):
@@ -1413,7 +1415,18 @@ def run_onetime_hisaab_only(weeks: list[str], commit: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="One-Time Hisaab-Tables-Only Backfill Generator")
-    parser.add_argument("--weeks", nargs="+", default=DEFAULT_BACKFILL_WEEKS, help="Target week IDs (e.g. CY26WK35 CY26WK34)")
+    parser.add_argument("--year", type=int, choices=[2025, 2026], default=None, help="Target calendar year (2025 for all CY25WK01-52, 2026 for CY26WK01-35)")
+    parser.add_argument("--weeks", nargs="+", default=None, help="Target week IDs (e.g. CY25WK01 CY25WK02)")
     parser.add_argument("--commit", action="store_true", help="Commit to hisaab_vehicle_weekly and hisaab_partner_weekly (default: Rollback Dry-Run)")
     args = parser.parse_args()
-    run_onetime_hisaab_only(args.weeks, commit=args.commit)
+
+    if args.weeks:
+        target_weeks = args.weeks
+    elif args.year == 2025:
+        target_weeks = WEEKS_2025
+    elif args.year == 2026:
+        target_weeks = DEFAULT_BACKFILL_WEEKS
+    else:
+        target_weeks = DEFAULT_BACKFILL_WEEKS
+
+    run_onetime_hisaab_only(target_weeks, commit=args.commit)

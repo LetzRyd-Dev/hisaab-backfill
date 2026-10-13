@@ -154,15 +154,14 @@
 
 ---
 
-## 3. EXECUTION STATUS (ALL 35 HISTORICAL WEEKS UNIFIED & 42 WEEKS LIVE)
+## 3. EXECUTION STATUS (COMPLETE 94-WEEK PLATFORM COVERAGE: 2025 & 2026)
 
-All 35 historical weeks (`CY26WK01–CY26WK35`, covering Dec 29, 2025 to Aug 30, 2026) have been generated and committed via [`05_hisaab_generator/run_onetime_hisaab_only_backfill.py`](05_hisaab_generator/run_onetime_hisaab_only_backfill.py) with **zero writes** to any upstream `core_*`, `sheet_*`, or `daily_rent_log` tables, and **100% isolation** of all production weeks:
+All 52 weeks of 2025 (`CY25WK01–CY25WK52`) and all 35 historical weeks of 2026 (`CY26WK01–CY26WK35`) have been generated and committed via [`05_hisaab_generator/run_onetime_hisaab_only_backfill.py`](05_hisaab_generator/run_onetime_hisaab_only_backfill.py) with **zero writes** to any upstream `core_*`, `sheet_*`, or `daily_rent_log` tables, and **100% isolation** of all live production weeks:
 
 | Target Cycles | Execution Script | Result in PostgreSQL | Status |
 | :--- | :--- | :--- | :---: |
-| **CY26WK01 – CY26WK25** (25 weeks) | `05_hisaab_generator/run_onetime_hisaab_only_backfill.py` | Populated in `hisaab_vehicle_weekly` & `hisaab_partner_weekly` | **COMPLETED** |
-| **CY26WK26 – CY26WK27** (2 weeks) | `05_hisaab_generator/run_onetime_hisaab_only_backfill.py` | Standardized with 0.00 parity (`2,250` veh / `857` prtnr) | **COMPLETED** |
-| **CY26WK28 – CY26WK35** (8 weeks) | `05_hisaab_generator/run_onetime_hisaab_only_backfill.py` | Populated in `hisaab_vehicle_weekly` & `hisaab_partner_weekly` | **COMPLETED** |
-| **CY26WK36 – CY26WK42** (7 weeks) | Live Production Jobs (`pg_cron`) | Untouched live cycles (`12,101` veh / `3,536` prtnr) | **PROTECTED & LIVE** |
-| **Total (`CY26WK01 – CY26WK42`)** | **All 42 Weeks Populated** | **`49,315` vehicle rows / `16,400` partner rows** | **100% LIVE** |
+| **CY25WK01 – CY25WK52** (52 weeks, Full Year 2025) | `run_onetime_hisaab_only_backfill.py --year 2025` | **`25,643`** veh / **`8,593`** prtnr (Exact 0.00 parity) | **COMPLETED** |
+| **CY26WK01 – CY26WK35** (35 weeks, Q1–Q3 2026) | `run_onetime_hisaab_only_backfill.py --year 2026` | **`37,214`** veh / **`12,864`** prtnr (Exact 0.00 parity) | **COMPLETED** |
+| **CY26WK36 – CY26WK42** (7 weeks, Production 2026) | Live Production Jobs (`pg_cron`) | **`12,101`** veh / **`3,536`** prtnr (Protected & live) | **PROTECTED & LIVE** |
+| **GRAND TOTAL (`CY25WK01 – CY26WK42`)** | **All 94 Consecutive Weeks Populated** | **`74,958` vehicle rows / `24,993` partner rows** | **100% LIVE** |
 

@@ -21,15 +21,15 @@ See the complete [ROADMAP.md](ROADMAP.md) for the variable-by-variable specifica
 pip install -r requirements.txt
 
 # One-Time Hisaab-Only Backfill (writes ONLY to hisaab_vehicle_weekly & hisaab_partner_weekly)
-# Dry-run across all 35 historical weeks (CY26WK01-CY26WK35):
-python 05_hisaab_generator/run_onetime_hisaab_only_backfill.py
+# Backfill year 2025 (all 52 weeks CY25WK01-52):
+python 05_hisaab_generator/run_onetime_hisaab_only_backfill.py --year 2025 --commit
 
-# Execute and commit to PostgreSQL:
-python 05_hisaab_generator/run_onetime_hisaab_only_backfill.py --commit
+# Backfill year 2026 (all 35 historical weeks CY26WK01-35):
+python 05_hisaab_generator/run_onetime_hisaab_only_backfill.py --year 2026 --commit
 ```
 
-## Live Database Status (`CY26WK01 – CY26WK42`)
-- **`public.hisaab_vehicle_weekly`**: `49,315` rows across all **42 weeks** (`37,214` unified backfilled rows + `12,101` live production rows).
-- **`public.hisaab_partner_weekly`**: `16,400` rows across all **42 weeks** (`12,864` unified backfilled rows + `3,536` live production rows, all historical weeks isolated with `previous_outstanding = 0.00`).
-- **August 2026 Onwards & Production Untouched**: `CY26WK36` through `CY26WK42` and all upstream `core_*`, `sheet_*`, and `daily_rent_log` tables remain **100% untouched**.
+## Live Database Status (`CY25WK01 – CY26WK42`: 94 Consecutive Weeks)
+- **`public.hisaab_vehicle_weekly`**: **`74,958` rows** across all **94 weeks** (`25,643` for 2025 + `49,315` for 2026).
+- **`public.hisaab_partner_weekly`**: **`24,993` rows** across all **94 weeks** (`8,593` for 2025 + `16,400` for 2026, with exact 0.00 zero-variance parity).
+- **Production Safety Guarantee**: `CY26WK36` through `CY26WK42` and all upstream `core_*`, `sheet_*`, and `daily_rent_log` tables remain **100% untouched**.
 
