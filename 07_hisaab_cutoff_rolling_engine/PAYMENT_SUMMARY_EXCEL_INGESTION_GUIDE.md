@@ -15,14 +15,14 @@ The three Excel files represent the master financial reconciliation workbooks ma
 - **Cumulative Collections & Driver Payments** from `'Payment Raw'` and `'Weekly Hisaab Paid to Driver'`.
 - **Security Deposit Escrow & Deductions** from `'Deposit Conversion'`.
 
-### Pan-India Portfolio Breakdown (From Master Summary Sheets)
+### Pan-India Portfolio Breakdown (From Master Summary Sheets - Audited Baseline Oct 12, 2026)
 
 | City | Master Sheet Name | Total Partners | Status Breakdown | Operational Pending Dues ($B_0$) | Pending Security Deposit | Total Dues incl. Deposit |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Bangalore (BLR)** | `'Summary  Pending Dues '` | **1,663** | 356 Active, 1,307 Inactive | **₹15,783,589.20** | ₹2,335,651.00 | ₹18,119,240.20 |
-| **Hyderabad (HYD)** | `'Summary Pending Dues'` | **469** | 79 Active, 390 Inactive | **₹12,987,581.26** | ₹1,046,010.00 | ₹14,033,591.26 |
-| **Mumbai (MUM)** | `'Summary  Pending Dues '` | **267** | 57 Active, 210 Inactive | **₹4,046,972.37** | ₹1,243,700.00 | ₹5,290,672.37 |
-| **Total Pan-India** | — | **2,399 Partners** | **492 Active, 1,907 Inactive** | **₹32,818,142.83** (~₹3.28 Cr) | **₹4,625,361.00** (~₹46.25 L) | **₹37,443,503.83** (~₹3.74 Cr) |
+| **Bangalore (BLR)** | `'Summary  Pending Dues '` | **1,698** | 402 Active, 1,296 Inactive | **₹19,124,238.27** | ₹6,219,708.00 | ₹25,343,946.27 |
+| **Hyderabad (HYD)** | `'Summary Pending Dues'` | **479** | 90 Active, 389 Inactive | **₹12,976,581.26** | ₹1,067,010.00 | ₹14,043,591.26 |
+| **Mumbai (MUM)** | `'Summary  Pending Dues '` | **269** | 59 Active, 210 Inactive | **₹4,040,772.37** | ₹1,252,200.00 | ₹5,292,972.37 |
+| **Total Pan-India** | — | **2,446 Partners** | **551 Active, 1,895 Inactive** | **₹36,141,591.90** (~₹3.61 Cr) | **₹8,538,918.00** (~₹85.39 L) | **₹44,680,509.90** (~₹4.47 Cr) |
 
 ---
 
@@ -89,22 +89,24 @@ The three Excel files represent the master financial reconciliation workbooks ma
 
 ---
 
-## 4. Cutoff Ingestion Script
+## 4. Cutoff Ingestion Script & Staging Snapshot
 
-A standalone automated ETL script is provided in the repository:
-[`scripts/etl_ingest_cutoff_baseline.py`](file:///c:/Users/anura/Downloads/LetzRyd%20Antigravity/scripts/etl_ingest_cutoff_baseline.py).
+An automated, idempotent ETL ingestion engine and snapshot are provided in this directory:
+- **ETL Script:** `07_hisaab_cutoff_rolling_engine/ingest_cutoff_baseline_oct12.py`
+- **Staging Snapshot CSV:** `07_hisaab_cutoff_rolling_engine/cutoff_baseline_oct12_snapshot.csv` (2,446 audited partners, SHA256: `97673f97ad3a3ed256c42925a064ac29f536ca4eac810472cd19101bc8687030`)
 
 ### How to Run:
 ```bash
-python scripts/etl_ingest_cutoff_baseline.py \
-  --hyd "C:\Users\anura\Downloads\HYD_Payment Summary.xlsx" \
-  --blr "C:\Users\anura\Downloads\Blr_Payment Summary [ Internal ].xlsx" \
-  --mum "C:\Users\anura\Downloads\Mum_Payment Summary.xlsx" \
-  --effective-week "CY26WK41"
+# 1. Verification and staging CSV generation (Dry-run, zero DB changes)
+python ingest_cutoff_baseline_oct12.py --skip-db
+
+# 2. Database Ingestion (Idempotent ON CONFLICT into public.hisaab_partner_opening_balances)
+python ingest_cutoff_baseline_oct12.py --commit
 ```
 
 This populates `public.hisaab_partner_opening_balances` in PostgreSQL with:
 - `partner_id` (`Vendor Code`)
 - `effective_week_id` (`CY26WK41`)
 - `opening_balance_due` (`Pending Dues`)
+- `cutoff_timestamp` (`2026-10-12 12:00:00+05:30` - Monday Noon Lock)
 - `remarks` (Detailed audit metadata: City, Type, Active Status, Deposit Paid).

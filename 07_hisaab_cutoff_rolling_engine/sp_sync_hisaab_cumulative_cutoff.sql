@@ -1,6 +1,28 @@
 -- sp_sync_hisaab_cumulative_cutoff.sql
 -- ============================================================================
 -- Complete Stored Procedure for Cutoff-Based Cumulative Rolling Ledger
+-- LetzRyd Hisaab Engine
+-- ============================================================================
+--
+-- LOCKING SPECIFICATION:
+-- 1. Lock Threshold: Monday 12:00 PM (Noon) IST (lock_cutoff_at).
+--    - The settlement week runs Monday 00:00:00 to Sunday 23:59:59 IST.
+--    - Cutoff freeze occurs strictly at Monday 12:00:00+05:30 (Noon) IST.
+-- 2. Immutability Guarantee:
+--    - Locked weeks (is_locked = TRUE or current_timestamp >= lock_cutoff_at)
+--      are completely immutable. No DML mutations, recalcs, or adjustments are permitted.
+-- 3. Priority 1 (Cutoff Anchor Week 'CY26WK41'):
+--    - opening_balance_due from public.hisaab_partner_opening_balances overrides
+--      previous_outstanding for week 'CY26WK41'.
+-- 4. Priority 2 (Post-Cutoff Cumulative Roll-Forward for weeks > 'CY26WK41'):
+--    - previous_outstanding = GREATEST(0.00, pw.total_outstanding)
+-- 5. Payment Deduction Formula:
+--    - total_outstanding = GREATEST(0.00, (previous_outstanding + current_period_os) - amount_paid_during_week)
+--      where current_period_os = current_week_os + prior_period_adjustments.
+-- 6. Late Adjustments Flow:
+--    - Adjustments (challans, accident credits, waivers) submitted after cutoff
+--      flow forward into the next active open week as prior_period_adjustments,
+--      leaving the locked week completely untouched.
 -- ============================================================================
 
 CREATE OR REPLACE PROCEDURE public.sp_sync_hisaab_cumulative_cutoff(
@@ -15,6 +37,7 @@ DECLARE
     v_year INT;
     v_week_num INT;
     v_is_locked BOOLEAN;
+    v_lock_cutoff_at TIMESTAMPTZ;
     v_prev_week_id VARCHAR;
     v_prev_week_end DATE;
     v_enable_roll_forward BOOLEAN := FALSE;
@@ -24,21 +47,50 @@ BEGIN
         RAISE EXCEPTION 'p_week_id is required.';
     END IF;
 
-    -- Ensure week metadata exists
+    -- Ensure week metadata exists in hisaab_settlement_weeks
     PERFORM public.fn_ensure_hisaab_week(p_week_id, NULL);
 
-    SELECT is_locked, week_start, week_end, settlement_year, settlement_week
-    INTO v_is_locked, v_week_start, v_week_end, v_year, v_week_num
+    SELECT is_locked, week_start, week_end, settlement_year, settlement_week, lock_cutoff_at
+    INTO v_is_locked, v_week_start, v_week_end, v_year, v_week_num, v_lock_cutoff_at
     FROM public.hisaab_settlement_weeks
     WHERE week_id = p_week_id;
 
-    -- Never mutate weeks that are already closed and locked
-    IF v_is_locked = TRUE THEN
-        RAISE NOTICE 'Week % is locked. Skipping sync.', p_week_id;
+    -- If lock_cutoff_at is NULL, calculate Monday 12:00 PM (Noon) IST:
+    -- Settlement week ends Sunday (v_week_end). Following Monday noon is (v_week_end + 1 day) at 12:00 PM IST.
+    IF v_lock_cutoff_at IS NULL THEN
+        v_lock_cutoff_at := ((v_week_end + INTERVAL '1 day')::date || ' 12:00:00+05:30')::timestamptz;
+        UPDATE public.hisaab_settlement_weeks
+        SET lock_cutoff_at = v_lock_cutoff_at
+        WHERE week_id = p_week_id;
+    END IF;
+
+    -- =========================================================================
+    -- LOCK ENFORCEMENT AT MONDAY 12:00 PM (NOON) IST (lock_cutoff_at)
+    -- =========================================================================
+    -- If week is already locked, or if current time has crossed lock_cutoff_at,
+    -- the week is completely immutable. Auto-lock if threshold reached.
+    IF v_is_locked = TRUE OR CURRENT_TIMESTAMP >= v_lock_cutoff_at THEN
+        IF v_is_locked = FALSE AND CURRENT_TIMESTAMP >= v_lock_cutoff_at THEN
+            UPDATE public.hisaab_settlement_weeks
+            SET is_locked = TRUE,
+                locked_at = CURRENT_TIMESTAMP,
+                locked_by = 'SYSTEM_MONDAY_12_NOON_LOCK',
+                notes = COALESCE(notes || '; ', '') || 'Auto-locked by Monday 12:00 PM Noon IST cutoff threshold'
+            WHERE week_id = p_week_id;
+
+            UPDATE public.hisaab_partner_weekly
+            SET settlement_status = 'LOCKED', updated_at = CURRENT_TIMESTAMP
+            WHERE week_id = p_week_id AND settlement_status <> 'LOCKED';
+
+            v_is_locked := TRUE;
+        END IF;
+
+        RAISE NOTICE 'Settlement week % is locked (Cutoff was: %). Week is completely immutable. Skipping sync.', 
+            p_week_id, v_lock_cutoff_at;
         RETURN;
     END IF;
 
-    -- Read configuration flags
+    -- Read configuration flags from hisaab_system_config
     SELECT (COALESCE(config_value, 'false') = 'true') INTO v_enable_roll_forward
     FROM public.hisaab_system_config
     WHERE config_key = 'enable_roll_forward';
@@ -47,7 +99,9 @@ BEGIN
     FROM public.hisaab_system_config
     WHERE config_key = 'cutoff_week_id';
 
-    -- Compute previous calendar week identifier
+    v_cutoff_week_id := COALESCE(v_cutoff_week_id, 'CY26WK41');
+
+    -- Compute previous calendar week identifier (e.g. CY26WK40 for CY26WK41)
     v_prev_week_end := v_week_start - INTERVAL '1 day';
     v_prev_week_id := 'CY' || to_char(v_prev_week_end, 'IY') || 'WK' || to_char(v_prev_week_end, 'IW');
 
@@ -77,6 +131,7 @@ BEGIN
     ),
     
     -- 2. Pull approved adjustments logged for this settlement week
+    -- (Adjustments for prior/locked weeks are routed to this week with is_prior_period = TRUE)
     prior_adj AS (
         SELECT 
             partner_id,
@@ -90,24 +145,23 @@ BEGIN
     ),
 
     -- 3. DETERMINE PREVIOUS OUTSTANDING BALANCE:
-    --    Case A: If this week is the cutoff week, use the verified snapshot from hisaab_partner_opening_balances.
-    --    Case B: If this week is AFTER the cutoff and roll-forward is enabled, carry forward
-    --            the previous week's unsettled total_outstanding.
-    --    Case C: Otherwise default to 0.00.
+    --    Priority 1: opening_balance_due overrides previous_outstanding for week 'CY26WK41' (from hisaab_partner_opening_balances).
+    --    Priority 2: For weeks > 'CY26WK41', previous_outstanding rolls forward:
+    --                previous_outstanding = GREATEST(0.00, pw.total_outstanding).
+    --    Otherwise: default to 0.00.
     prev_dues AS (
         SELECT 
             ap.partner_id,
             CASE 
-                -- Priority 1: Direct cutoff snapshot override for this week
+                -- Priority 1: opening_balance_due overrides previous_outstanding for cutoff week 'CY26WK41'
+                WHEN p_week_id = v_cutoff_week_id THEN COALESCE(op.opening_balance_due, 0.00)
                 WHEN op.opening_balance_due IS NOT NULL THEN op.opening_balance_due
                 
-                -- Priority 2: Post-cutoff cumulative roll-forward from previous week
-                -- (Note: pw.total_outstanding already accounts for payments made in that week:
-                --  total_outstanding = GREATEST(0, (previous_outstanding + current_period_os) - amount_paid_during_week))
+                -- Priority 2: For weeks > 'CY26WK41', previous_outstanding rolls forward:
+                -- previous_outstanding = GREATEST(0.00, pw.total_outstanding)
                 WHEN v_enable_roll_forward = TRUE 
-                     AND pw.total_outstanding IS NOT NULL 
-                     AND p_week_id >= v_cutoff_week_id THEN 
-                     GREATEST(0.00, pw.total_outstanding)
+                     AND p_week_id > v_cutoff_week_id THEN 
+                     GREATEST(0.00, COALESCE(pw.total_outstanding, 0.00))
                 
                 ELSE 0.00 
             END AS previous_outstanding
@@ -215,15 +269,25 @@ BEGIN
         0.00 AS deposit_deduction_current_week,
         0.00 AS pending_deposit,
         
-        -- Cumulative Total Outstanding:
-        -- = Current Week Net Due + Carried Forward Previous Outstanding + Prior Adjustments - Current Payments
-        (COALESCE(v.current_week_os, 0.00) + COALESCE(pd.previous_outstanding, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00) - COALESCE(ep.amount_paid_during_week, 0.00)) AS total_outstanding,
+        -- Formula: total_outstanding = GREATEST(0.00, (previous_outstanding + current_period_os) - amount_paid_during_week)
+        -- where current_period_os = current_week_os + prior_period_adjustments
+        GREATEST(0.00, 
+            (COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00)) 
+            - COALESCE(ep.amount_paid_during_week, 0.00)
+        ) AS total_outstanding,
         
-        -- Payout (if negative / LetzRyd owes driver)
-        ABS(LEAST(0, (COALESCE(v.current_week_os, 0.00) + COALESCE(pd.previous_outstanding, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00) - COALESCE(ep.amount_paid_during_week, 0.00)))) AS net_bank_payout,
+        -- Net Bank Payout (when earnings exceed rent + previous debt + adjustments)
+        CASE 
+            WHEN (COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00) - COALESCE(ep.amount_paid_during_week, 0.00)) < 0.00
+            THEN ABS(COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00) - COALESCE(ep.amount_paid_during_week, 0.00))
+            ELSE 0.00
+        END AS net_bank_payout,
         
-        -- To Collect (if positive / driver owes LetzRyd)
-        GREATEST(0, (COALESCE(v.current_week_os, 0.00) + COALESCE(pd.previous_outstanding, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00) - COALESCE(ep.amount_paid_during_week, 0.00))) AS net_amount_to_collect,
+        -- Net Amount to Collect (when driver owes company)
+        GREATEST(0.00, 
+            (COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00)) 
+            - COALESCE(ep.amount_paid_during_week, 0.00)
+        ) AS net_amount_to_collect,
         
         'DRAFT' AS settlement_status,
         dr.account_number AS payout_account_number,
@@ -258,10 +322,14 @@ BEGIN
         security_deposit_target = EXCLUDED.security_deposit_target,
         security_deposit_paid = EXCLUDED.security_deposit_paid,
         
-        -- Recalculate with preserved payments
-        total_outstanding = (EXCLUDED.current_week_os + EXCLUDED.previous_outstanding + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)),
-        net_bank_payout = ABS(LEAST(0, (EXCLUDED.current_week_os + EXCLUDED.previous_outstanding + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)))),
-        net_amount_to_collect = GREATEST(0, (EXCLUDED.current_week_os + EXCLUDED.previous_outstanding + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00))),
+        -- Recalculate with preserved payments and floor at 0.00
+        total_outstanding = GREATEST(0.00, (EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)),
+        net_bank_payout = CASE 
+            WHEN (EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)) < 0.00
+            THEN ABS(EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00))
+            ELSE 0.00 
+        END,
+        net_amount_to_collect = GREATEST(0.00, (EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)),
         payout_account_number = COALESCE(EXCLUDED.payout_account_number, public.hisaab_partner_weekly.payout_account_number),
         payout_ifsc = COALESCE(EXCLUDED.payout_ifsc, public.hisaab_partner_weekly.payout_ifsc),
         updated_at = CURRENT_TIMESTAMP

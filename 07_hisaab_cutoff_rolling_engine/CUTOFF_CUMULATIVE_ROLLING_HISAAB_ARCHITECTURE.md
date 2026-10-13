@@ -889,32 +889,39 @@ def _apply_payment_success_rolling(payment: AppPayments, db: Session) -> dict:
 
 ## 5. Production Migration & Rollout Runbook
 
-### 5.1 Pre-Migration Phase (T-72 Hours to T-0)
+### 5.1 Pre-Migration Phase & Baseline Calibration
 
 - [ ] **Data Contract Verification**: Verify that all active drivers in `app_drivers` have normalized 10-digit phone numbers matching `core_partner_onboarding`.
-- [ ] **Freeze Historical Periods**: Verify that all settlement weeks prior to Cutoff Week (e.g., $W \le 39$) have `is_locked = TRUE` in `hisaab_settlement_weeks`.
-- [ ] **Shadow Rehearsal**: Execute `sp_validate_and_commit_cutoff_snapshot` in staging database (`letzryd-dev-test`) and verify that total opening debt matches Finance sign-off within ₹0.00 tolerance.
+- [ ] **Freeze Historical Periods**: Verify that all settlement weeks prior to Cutoff Week ($W \le \text{CY26WK40}$) have `is_locked = TRUE` in `hisaab_settlement_weeks`.
+- [ ] **Safety Isolation Sign-off**: Verify zero mutation of core tables (`app_hisaabs`, `app_drivers`, `vehicles`, `app_driver_allocations`, `app_payments`) as certified in `CORE_TABLES_SAFETY_CERTIFICATE.md`.
+- [ ] **Baseline Ingestion Validation**: Execute `python ingest_cutoff_baseline_oct12.py --skip-db` and verify that the audited snapshot matches Finance sign-off:
+  - Total Partners: **2,446** (551 Active, 1,895 Inactive)
+  - HYD: 479 Partners | ₹12,976,581.26 Pending Dues | ₹1,067,010.00 Deposit
+  - BLR: 1,698 Partners | ₹19,124,238.27 Pending Dues | ₹6,219,708.00 Deposit
+  - MUM: 269 Partners | ₹4,040,772.37 Pending Dues | ₹1,252,200.00 Deposit
+  - Total Pan-India $B_0$: **₹36,141,591.90** | Deposit: **₹8,538,918.00**
+  - Snapshot Checksum: `97673f97ad3a3ed256c42925a064ac29f536ca4eac810472cd19101bc8687030`
 - [ ] **Database Pre-Execution Backup**:
   ```bash
   gcloud sql backups create \
     --instance=letzryd-core-prod \
-    --description="Pre-Cutoff Cumulative Rolling Migration Backup"
+    --description="Pre-Cutoff Cumulative Rolling Migration Backup Oct 12"
   ```
 
 ---
 
-### 5.2 Day of Cutoff Execution Checklist (Cutoff Night: Sunday 23:59 -> Monday 03:00)
+### 5.2 Monday 12:00 PM (Noon) IST Cutoff & Lock Execution Sequence
 
 | Time Window | Execution Step | Operational Action | Verification Criteria |
 | :--- | :--- | :--- | :--- |
-| **00:01 – 00:15** | **1. Traffic Drain & Maintenance Mode** | Temporarily pause frontend write APIs; display "Settlement Cycle Underway" maintenance banner on Driver App. | Zero in-flight Cashfree webhook drops (Cashfree retries safely). |
-| **00:15 – 00:30** | **2. Lock Cutoff Settlement Week** | Execute: `UPDATE hisaab_settlement_weeks SET is_locked = TRUE WHERE week_id = 'CY26WK39';` | `is_locked = TRUE` for cutoff week. |
-| **00:30 – 01:00** | **3. Load & Validate Staging Data** | Ingest signed-off CSV into `stg_hisaab_cutoff_raw` via `COPY` or Python migration runner. | Row count matches Finance master record (1,830 vehicles / 486 partners). |
-| **01:00 – 01:30** | **4. Commit Master Snapshot ($B_0$)** | Execute `CALL sp_validate_and_commit_cutoff_snapshot('CUTOFF_CY26WK39_20260927', 'CY26WK39', '2026-09-27', 'HeadOfFinance');` | Record created in `hisaab_cutoff_master` with `is_frozen = TRUE`. |
-| **01:30 – 02:00** | **5. Deploy Rolling Procedures** | Deploy `sp_sync_hisaab_partner_weekly_rolling` and updated `app_tables_full_setup.sql`. | Stored procedure compilation exit code 0. |
-| **02:00 – 02:30** | **6. Run Week 1 Roll-Forward Engine** | Execute `CALL sp_sync_hisaab_partner_weekly_rolling('CY26WK40', NULL);` | Verified that `previous_outstanding` matches snapshot $B_0$. |
-| **02:30 – 02:45** | **7. Sync App Tables** | Execute `CALL sp_populate_all_app_tables(FALSE);` | `app_hisaabs` and `app_drivers` populated with cumulative metrics. |
-| **02:45 – 03:00** | **8. Smoke Test & Go-Live** | Execute API integration tests (`test_backend_fixes.py`), lift maintenance banner, enable pg_cron jobs. | Portal live on `cashfree-web-portal.vercel.app`. |
+| **Mon 11:30 – 12:00** | **1. Traffic Reconciliation Window** | Monitor incoming real-time gateway payments via Cashfree webhooks; credit to active open week `CY26WK41`. | Real-time balance deduction verified via `api_payment_integration_guide.md`. |
+| **Mon 12:00:00 PM** | **2. Monday Noon Cutoff Lock** | Execute cutoff freeze: `UPDATE hisaab_settlement_weeks SET is_locked = TRUE, lock_cutoff_at = '2026-10-12 12:00:00+05:30' WHERE week_id = 'CY26WK41';` | Week `CY26WK41` becomes completely immutable (`is_locked = TRUE`). |
+| **Mon 12:01 – 12:15** | **3. Late Payment Redirection** | Gateway webhooks arriving post-12:00 PM automatically route to next open week (`CY26WK42`). | Zero mutation of locked `CY26WK41` ledger records. |
+| **Mon 12:15 – 12:30** | **4. Ingest Baseline Snapshot ($B_0$)** | Run `python ingest_cutoff_baseline_oct12.py --commit` to populate `public.hisaab_partner_opening_balances`. | 2,446 records inserted/updated idempotently (`ON CONFLICT DO UPDATE`). |
+| **Mon 12:30 – 12:45** | **5. Execute Stored Procedure** | Execute `CALL sp_sync_hisaab_cumulative_cutoff('CY26WK41');` | Priority 1 applied: `opening_balance_due` overrides previous outstanding for `CY26WK41`. |
+| **Mon 12:45 – 01:00** | **6. Run Week 42 Roll-Forward Engine** | Execute `CALL sp_sync_hisaab_cumulative_cutoff('CY26WK42');` | Priority 2 verified: Week 42 previous outstanding rolls forward from Week 41 total outstanding. |
+| **Mon 01:00 – 01:15** | **7. Verification Suite Execution** | Run automated tests: `python test_simulation.py` and `test_suite_sp_sync_hisaab.sql`. | 100% pass across all 6 architectural test scenarios. |
+| **Mon 01:15 – 01:30** | **8. Lift Operations Hold** | Refresh driver app cache and open driver portal view. | Portal live on `cashfree-web-portal.vercel.app` displaying verified running passbook. |
 
 ---
 
