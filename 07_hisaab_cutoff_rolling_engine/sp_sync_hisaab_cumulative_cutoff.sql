@@ -110,20 +110,20 @@ BEGIN
         SELECT 
             v.partner_id,
             MAX(v.partner_name) AS partner_name,
-            MAX(v.partner_type) AS partner_type,
+            MAX(CASE WHEN v.partner_id ILIKE '%IP%' OR v.partner_id ILIKE '%OP%' THEN 'Operator' ELSE 'Individual' END) AS partner_type,
             MAX(v.city) AS city,
             COUNT(DISTINCT v.vehicle_number)::INT AS allotted_cars_count,
             SUM(v.onroad_days)::INT AS total_onroad_days,
-            SUM(v.uber_trips + v.ola_trips + v.rapido_trips)::INT AS total_trips,
-            SUM(v.net_weekly_lease_rental) AS total_net_rent_billed,
-            SUM(v.uber_total_earnings + v.ola_net_revenue + v.rapido_net_revenue) AS total_platform_earnings,
-            SUM(ABS(COALESCE(v.uber_cash_collection, 0.00)) + ABS(COALESCE(v.ola_cash_collection, 0.00)) + ABS(COALESCE(v.rapido_cash_collected, 0.00))) AS total_cash_collected,
-            SUM(v.weekly_platform_incentive) AS total_platform_incentives,
-            SUM(v.vehicle_adjustments) AS total_adjustments,
-            SUM(v.challan_amount) AS total_challans,
-            SUM(v.accident_penalties) AS total_accidents,
-            SUM(v.tds_amount) AS total_tds,
-            SUM(v.current_week_os) AS current_week_os
+            SUM(COALESCE(v.uber_trips, 0) + COALESCE(v.ola_trips, 0))::INT AS total_trips,
+            SUM(COALESCE(v.net_weekly_lease_rental, 0.00)) AS total_net_rent_billed,
+            SUM(COALESCE(v.uber_total_earnings, 0.00) + COALESCE(v.ola_net_revenue, 0.00)) AS total_platform_earnings,
+            SUM(ABS(COALESCE(v.uber_cash_collection, 0.00)) + ABS(COALESCE(v.ola_cash_collection, 0.00))) AS total_cash_collected,
+            SUM(COALESCE(v.uber_incentive, 0.00) + COALESCE(v.ola_incentive, 0.00)) AS total_platform_incentives,
+            SUM(COALESCE(v.adjustment_amount, 0.00)) AS total_adjustments,
+            SUM(COALESCE(v.challan_amount, 0.00)) AS total_challans,
+            SUM(COALESCE(v.accident_deduction, 0.00)) AS total_accidents,
+            SUM(COALESCE(v.tds_amount, 0.00)) AS total_tds,
+            SUM(COALESCE(v.current_week_os, 0.00)) AS current_week_os
         FROM public.hisaab_vehicle_weekly v
         WHERE v.week_id = p_week_id
           AND (p_partner IS NULL OR v.partner_id = p_partner)
@@ -158,10 +158,10 @@ BEGIN
                 WHEN op.opening_balance_due IS NOT NULL THEN op.opening_balance_due
                 
                 -- Priority 2: For weeks > 'CY26WK41', previous_outstanding rolls forward:
-                -- previous_outstanding = GREATEST(0.00, pw.total_outstanding)
+                -- If previous week was the cutoff week and had no prior partner row, fallback to cutoff opening balance
                 WHEN v_enable_roll_forward = TRUE 
                      AND p_week_id > v_cutoff_week_id THEN 
-                     GREATEST(0.00, COALESCE(pw.total_outstanding, 0.00))
+                     GREATEST(0.00, COALESCE(pw.total_outstanding, prev_op.opening_balance_due, 0.00))
                 
                 ELSE 0.00 
             END AS previous_outstanding
@@ -172,6 +172,8 @@ BEGIN
             UNION
             SELECT partner_id FROM public.hisaab_partner_opening_balances WHERE effective_week_id = p_week_id
             UNION
+            SELECT partner_id FROM public.hisaab_partner_opening_balances WHERE effective_week_id = v_cutoff_week_id AND v_enable_roll_forward = TRUE
+            UNION
             SELECT partner_id FROM public.hisaab_partner_weekly 
             WHERE v_enable_roll_forward = TRUE 
               AND week_id = v_prev_week_id 
@@ -179,6 +181,8 @@ BEGIN
         ) ap
         LEFT JOIN public.hisaab_partner_opening_balances op 
             ON op.partner_id = ap.partner_id AND op.effective_week_id = p_week_id
+        LEFT JOIN public.hisaab_partner_opening_balances prev_op 
+            ON prev_op.partner_id = ap.partner_id AND prev_op.effective_week_id = v_cutoff_week_id
         LEFT JOIN public.hisaab_partner_weekly pw 
             ON pw.week_id = v_prev_week_id AND pw.partner_id = ap.partner_id
         WHERE (p_partner IS NULL OR ap.partner_id = p_partner)

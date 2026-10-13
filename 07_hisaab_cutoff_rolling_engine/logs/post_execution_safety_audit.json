@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-10-13T15:30:00+05:30",
+  "database": "letzryd_dev",
+  "core_tables": {
+    "app_hisaabs": {
+      "expected_count": 25,
+      "actual_count": 25,
+      "status": "MATCH"
+    },
+    "app_drivers": {
+      "expected_count": 28,
+      "actual_count": 28,
+      "status": "MATCH"
+    },
+    "app_driver_allocations": {
+      "expected_count": 25,
+      "actual_count": 25,
+      "status": "MATCH"
+    },
+    "vehicles": {
+      "expected_count": 25,
+      "actual_count": 25,
+      "status": "MATCH"
+    },
+    "app_payments": {
+      "expected_count": 7,
+      "actual_count": 7,
+      "status": "MATCH"
+    }
+  },
+  "cutoff_baseline": {
+    "week_id": "CY26WK41",
+    "partner_count": 2446,
+    "total_opening_dues": 36141591.9
+  },
+  "zero_mutation_certified": true
+}

@@ -15,6 +15,17 @@ CREATE TABLE IF NOT EXISTS public.hisaab_system_config (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conrelid = 'public.hisaab_system_config'::regclass 
+          AND contype = 'p'
+    ) THEN
+        ALTER TABLE public.hisaab_system_config ADD PRIMARY KEY (config_key);
+    END IF;
+END $$;
+
 -- Seed configuration keys (idempotent with ON CONFLICT DO UPDATE)
 INSERT INTO public.hisaab_system_config (config_key, config_value, description)
 VALUES 
@@ -57,16 +68,57 @@ CREATE TABLE IF NOT EXISTS public.hisaab_partner_opening_balances (
 
 -- Ensure columns exist if table was previously created with older schema
 ALTER TABLE public.hisaab_partner_opening_balances 
+    ADD COLUMN IF NOT EXISTS driver_code VARCHAR(100) NULL;
+
+ALTER TABLE public.hisaab_partner_opening_balances 
+    ADD COLUMN IF NOT EXISTS phone VARCHAR(20) NULL;
+
+ALTER TABLE public.hisaab_partner_opening_balances 
+    ADD COLUMN IF NOT EXISTS cutoff_date DATE DEFAULT '2026-10-12';
+
+ALTER TABLE public.hisaab_partner_opening_balances 
     ADD COLUMN IF NOT EXISTS cutoff_timestamp TIMESTAMPTZ DEFAULT '2026-10-12 12:00:00+05:30';
+
+ALTER TABLE public.hisaab_partner_opening_balances 
+    ADD COLUMN IF NOT EXISTS opening_balance_due NUMERIC(12,2) NOT NULL DEFAULT 0.00;
+
+ALTER TABLE public.hisaab_partner_opening_balances 
+    ADD COLUMN IF NOT EXISTS security_deposit_pending NUMERIC(12,2) NOT NULL DEFAULT 0.00;
+
+ALTER TABLE public.hisaab_partner_opening_balances 
+    ADD COLUMN IF NOT EXISTS verified_by VARCHAR(100) DEFAULT 'Admin Cutoff Upload';
 
 ALTER TABLE public.hisaab_partner_opening_balances 
     ADD COLUMN IF NOT EXISTS remarks TEXT;
 
 ALTER TABLE public.hisaab_partner_opening_balances 
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+
+ALTER TABLE public.hisaab_partner_opening_balances 
     ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
 
 ALTER TABLE public.hisaab_partner_opening_balances 
-    ADD COLUMN IF NOT EXISTS cutoff_date DATE DEFAULT '2026-10-12';
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conrelid = 'public.hisaab_partner_opening_balances'::regclass 
+          AND contype = 'p'
+    ) THEN
+        ALTER TABLE public.hisaab_partner_opening_balances ADD PRIMARY KEY (id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conrelid = 'public.hisaab_partner_opening_balances'::regclass 
+          AND conname = 'uq_partner_effective_week'
+    ) THEN
+        ALTER TABLE public.hisaab_partner_opening_balances 
+            ADD CONSTRAINT uq_partner_effective_week UNIQUE (partner_id, effective_week_id);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_cutoff_partner_week 
 ON public.hisaab_partner_opening_balances(partner_id, effective_week_id);
@@ -94,6 +146,26 @@ CREATE TABLE IF NOT EXISTS public.hisaab_settlement_weeks (
 
 ALTER TABLE public.hisaab_settlement_weeks 
     ADD COLUMN IF NOT EXISTS lock_cutoff_at TIMESTAMPTZ DEFAULT '2026-10-12 12:00:00+05:30';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conrelid = 'public.hisaab_settlement_weeks'::regclass 
+          AND contype = 'p'
+    ) THEN
+        ALTER TABLE public.hisaab_settlement_weeks ADD PRIMARY KEY (week_id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conrelid = 'public.hisaab_settlement_weeks'::regclass 
+          AND conname = 'uq_hisaab_settlement_weeks_year_week'
+    ) THEN
+        ALTER TABLE public.hisaab_settlement_weeks 
+            ADD CONSTRAINT uq_hisaab_settlement_weeks_year_week UNIQUE (settlement_year, settlement_week);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_hisaab_weeks_dates ON public.hisaab_settlement_weeks (week_start, week_end);
 CREATE INDEX IF NOT EXISTS idx_hisaab_weeks_locked ON public.hisaab_settlement_weeks (is_locked);
@@ -153,6 +225,26 @@ CREATE TABLE IF NOT EXISTS public.hisaab_partner_weekly (
 );
 
 CREATE INDEX IF NOT EXISTS idx_hisaab_partner_week ON public.hisaab_partner_weekly (week_id, partner_id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conrelid = 'public.hisaab_partner_weekly'::regclass 
+          AND contype = 'p'
+    ) THEN
+        ALTER TABLE public.hisaab_partner_weekly ADD PRIMARY KEY (id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conrelid = 'public.hisaab_partner_weekly'::regclass 
+          AND conname = 'uq_hisaab_partner_week'
+    ) THEN
+        ALTER TABLE public.hisaab_partner_weekly 
+            ADD CONSTRAINT uq_hisaab_partner_week UNIQUE (week_id, partner_id);
+    END IF;
+END $$;
 
 
 -- ----------------------------------------------------------------------------
@@ -305,3 +397,13 @@ CREATE TABLE IF NOT EXISTS public.hisaab_cutoff_audit_log (
     resulting_os NUMERIC(12,2) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+
+-- ----------------------------------------------------------------------------
+-- 10. Seed Settlement Week 'CY26WK41' with Monday 12:00 PM (Noon) IST cutoff
+-- ----------------------------------------------------------------------------
+SELECT public.fn_ensure_hisaab_week('CY26WK41');
+
+UPDATE public.hisaab_settlement_weeks 
+SET lock_cutoff_at = '2026-10-12 12:00:00+05:30'
+WHERE week_id = 'CY26WK41';
