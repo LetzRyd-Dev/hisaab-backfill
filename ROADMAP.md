@@ -76,7 +76,7 @@
 ### Variable 3: Approved Adjustments & Deductions
 * **Question Answered:** What ad-hoc debits or credits apply to this cycle?
 * **Upstream Data Sources:**
-  - `core_adjustments` (15,843 approved rows, Dec 2025 to present), `sheet_adjustments`, `july_partner_adjustment`
+  - `core_adjustments` (15,843 approved rows, Dec 2025 to present), `sheet_adjustments`, `portal_partner_adjustment`
 * **Target Persistence Table:** `public.hisaab_adjustments_ledger`
 * **Algorithm / Procedure:**
   - Waterfall matching: `partner_id` $\to$ phone number $\to$ vehicle custody on `incident_date`.
@@ -103,7 +103,7 @@
 
 ### Variable 5: Platform Fare Earnings & Cash Collected
 * **Question Answered:** How much did the vehicle earn digitally, and how much passenger cash was pocketed?
-* **Upstream Data Sources (Strictly Primary & Secondary Sources per `LetzRyd_Platform (6).docx`; obsolete `z_*` and `july_ola_raw` excluded):**
+* **Upstream Data Sources (Strictly Primary & Secondary Sources per `LetzRyd_Platform (6).docx`; obsolete `z_*` and `portal_ola_raw` excluded):**
   - Uber: `core_uber_daily`, `core_uber_weekly`, `uber_pipeline_trips`, `uber_pipeline_order_transactions`, `uber_vehicle_incentives_raw`.
   - Ola: `core_ola_daily`, `core_ola_weekly`, `ola_raw_crns`, `ola_raw_transactions`.
   - Rapido: `core_rapido_daily` (mandated ₹0.00 financial impact; used for trip count & distance).
