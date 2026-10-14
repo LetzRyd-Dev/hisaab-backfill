@@ -26,10 +26,15 @@ python 05_hisaab_generator/run_onetime_hisaab_only_backfill.py --year 2025 --com
 
 # Backfill year 2026 (all 35 historical weeks CY26WK01-35):
 python 05_hisaab_generator/run_onetime_hisaab_only_backfill.py --year 2026 --commit
+
+# Incorporate GPS telematics across historical weeks (CY25WK24 to CY26WK35):
+python 05_hisaab_generator/update_gps_telematics_in_hisaab.py --commit
 ```
 
 ## Live Database Status (`CY25WK01 – CY26WK42`: 94 Consecutive Weeks)
 - **`public.hisaab_vehicle_weekly`**: **`74,958` rows** across all **94 weeks** (`25,643` for 2025 + `49,315` for 2026).
 - **`public.hisaab_partner_weekly`**: **`24,993` rows** across all **94 weeks** (`8,593` for 2025 + `16,400` for 2026, with exact 0.00 zero-variance parity).
+- **GPS Telematics**: Added **3.83 Crore dead KM** and **₹1,66,64,082.54** in penalties across **64 historical weeks** (`CY25WK24–CY26WK35`) for BLR individual drivers.
 - **Production Safety Guarantee**: `CY26WK36` through `CY26WK42` and all upstream `core_*`, `sheet_*`, and `daily_rent_log` tables remain **100% untouched**.
+
 

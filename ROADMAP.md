@@ -165,3 +165,18 @@ All 52 weeks of 2025 (`CY25WK01–CY25WK52`) and all 35 historical weeks of 2026
 | **CY26WK36 – CY26WK42** (7 weeks, Production 2026) | Live Production Jobs (`pg_cron`) | **`12,101`** veh / **`3,536`** prtnr (Protected & live) | **PROTECTED & LIVE** |
 | **GRAND TOTAL (`CY25WK01 – CY26WK42`)** | **All 94 Consecutive Weeks Populated** | **`74,958` vehicle rows / `24,993` partner rows** | **100% LIVE** |
 
+---
+
+## 4. GPS TELEMATICS INTEGRATION (CY25WK24 – CY26WK35: 64 WEEKS)
+
+Executed via [`05_hisaab_generator/update_gps_telematics_in_hisaab.py`](05_hisaab_generator/update_gps_telematics_in_hisaab.py) on the backfilled historical cycles after `core_gps` reached 637,868 rows (5.18 Crore KM):
+
+* **Historical Cycles Covered:** **64 weeks** (`CY25WK24` to `CY26WK35`).
+* **Vehicles Updated with Dead KM:** **`24,078` vehicle rows** across `hisaab_vehicle_weekly`.
+* **Partners Updated:** **`4,780` partner rows** across `hisaab_partner_weekly`.
+* **Total Dead KM Tracked:** **`3.83 Crore KM`** (`88.51L KM` in CY25 + `2.95 Crore KM` in CY26).
+* **Total Dead-Mile Penalty Added:** **`₹1,66,64,082.54`** (`₹33,22,143.39` in CY25 + `₹1,33,41,939.15` in CY26, applied strictly to BLR Individual Drivers at ₹3.00/KM; Operators & other cities evaluate to ₹0.00).
+* **Parity Status:** **Exact `0.00` Zero-Variance Parity** verified across all 87 backfilled weeks.
+* **Production Isolation:** Weeks `CY26WK36` through `CY26WK42` verified **100% untouched**.
+
+
