@@ -262,30 +262,45 @@ def apply_db_ingestion(records: List[Dict[str, Any]], commit: bool = False):
 
     db = SessionLocal()
     try:
-        print(f"\n[DATABASE VERIFICATION & INGESTION]")
-        print(f"  Target Table: public.hisaab_partner_opening_balances")
-        print(f"  Mode: {'COMMIT (LIVE)' if commit else 'DRY RUN (ROLLBACK)'}")
-
         upsert_stmt = text("""
             INSERT INTO public.hisaab_partner_opening_balances (
                 partner_id,
+                driver_code,
+                phone,
                 effective_week_id,
+                cutoff_date,
+                cutoff_timestamp,
                 opening_balance_due,
+                security_deposit_pending,
                 remarks,
                 created_by,
+                verified_by,
+                is_active,
                 created_at,
                 updated_at
             ) VALUES (
                 :partner_id,
+                :driver_code,
+                :phone,
                 :effective_week_id,
+                CAST(:cutoff_date AS date),
+                CAST(:cutoff_timestamp AS timestamptz),
                 :opening_balance_due,
+                :security_deposit_pending,
                 :remarks,
                 :created_by,
+                :created_by,
+                TRUE,
                 CURRENT_TIMESTAMP,
                 CURRENT_TIMESTAMP
             )
             ON CONFLICT (partner_id, effective_week_id) DO UPDATE SET
                 opening_balance_due = EXCLUDED.opening_balance_due,
+                security_deposit_pending = EXCLUDED.security_deposit_pending,
+                driver_code = EXCLUDED.driver_code,
+                phone = EXCLUDED.phone,
+                cutoff_date = EXCLUDED.cutoff_date,
+                cutoff_timestamp = EXCLUDED.cutoff_timestamp,
                 remarks = EXCLUDED.remarks,
                 updated_at = CURRENT_TIMESTAMP;
         """)
@@ -294,8 +309,13 @@ def apply_db_ingestion(records: List[Dict[str, Any]], commit: bool = False):
         for r in records:
             db.execute(upsert_stmt, {
                 'partner_id': r['partner_id'],
+                'driver_code': r.get('driver_name', ''),
+                'phone': r.get('phone', ''),
                 'effective_week_id': r['effective_week_id'],
+                'cutoff_date': r.get('cutoff_date', '2026-10-12'),
+                'cutoff_timestamp': '2026-10-12 12:00:00+05:30',
                 'opening_balance_due': r['opening_balance_due'],
+                'security_deposit_pending': r.get('security_deposit_pending', 0.0),
                 'remarks': r['remarks'],
                 'created_by': VERIFIED_BY
             })

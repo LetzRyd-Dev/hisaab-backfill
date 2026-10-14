@@ -187,7 +187,23 @@ BEGIN
                      COALESCE(pw.total_outstanding, 0.00)
                 
                 ELSE 0.00 
-            END AS previous_outstanding
+            END AS previous_outstanding,
+
+            -- Pending security deposit roll-forward:
+            CASE 
+                WHEN p_week_id = v_cutoff_week_id THEN COALESCE(op.security_deposit_pending, 0.00)
+                WHEN op.security_deposit_pending IS NOT NULL THEN op.security_deposit_pending
+                WHEN v_enable_roll_forward = TRUE AND v_prev_week_id = v_cutoff_week_id THEN 
+                     COALESCE(pw.pending_deposit, prev_op.security_deposit_pending, 0.00)
+                WHEN v_enable_roll_forward = TRUE AND v_prev_week_id > v_cutoff_week_id THEN 
+                     COALESCE(pw.pending_deposit, 0.00)
+                ELSE 0.00
+            END AS pending_deposit,
+            
+            -- Resolved metadata from opening balances (for inactive partners)
+            COALESCE(op.remarks::json->>'city', prev_op.remarks::json->>'city') AS op_city,
+            COALESCE(op.remarks::json->>'name', prev_op.remarks::json->>'name') AS op_name,
+            COALESCE(op.remarks::json->>'type', prev_op.remarks::json->>'type') AS op_type
         FROM (
             SELECT partner_id FROM veh_summary
             UNION
@@ -230,10 +246,13 @@ BEGIN
     all_partners AS (
         SELECT partner_id FROM prev_dues
         WHERE previous_outstanding <> 0.00 
+           OR pending_deposit > 0.00
            OR partner_id IN (SELECT partner_id FROM veh_summary)
            OR partner_id IN (SELECT partner_id FROM prior_adj)
            OR partner_id IN (SELECT partner_id FROM current_ledger_adj)
            OR partner_id IN (SELECT partner_id FROM existing_payments WHERE amount_paid_during_week > 0)
+           OR (p_week_id = v_cutoff_week_id AND partner_id IN (SELECT partner_id FROM public.hisaab_partner_opening_balances WHERE effective_week_id = v_cutoff_week_id))
+           OR (v_prev_week_id = v_cutoff_week_id AND partner_id IN (SELECT partner_id FROM public.hisaab_partner_opening_balances WHERE effective_week_id = v_cutoff_week_id))
     )
 
     -- 6. UPSERT into hisaab_partner_weekly
@@ -282,9 +301,9 @@ BEGIN
         v_week_start,
         v_week_end,
         ap.partner_id,
-        COALESCE(v.partner_name, dr.driver_name, ap.partner_id) AS partner_name,
-        COALESCE(v.partner_type, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 'Operator' ELSE 'Individual' END) AS partner_type,
-        COALESCE(v.city, 'HYD') AS city,
+        COALESCE(v.partner_name, dr.driver_name, pd.op_name, ap.partner_id) AS partner_name,
+        COALESCE(v.partner_type, pd.op_type, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 'Operator' ELSE 'Individual' END) AS partner_type,
+        COALESCE(v.city, dr.city, pd.op_city, CASE WHEN ap.partner_id ILIKE '%BLR%' THEN 'BLR' WHEN ap.partner_id ILIKE '%MUM%' THEN 'MUM' ELSE 'HYD' END) AS city,
         COALESCE(v.allotted_cars_count, 0) AS allotted_cars_count,
         COALESCE(v.total_onroad_days, 0) AS total_onroad_days,
         COALESCE(v.total_trips, 0) AS total_trips,
@@ -301,10 +320,10 @@ BEGIN
         COALESCE(pd.previous_outstanding, 0.00) AS previous_outstanding,
         COALESCE(ep.amount_paid_during_week, 0.00) AS amount_paid_during_week,
         COALESCE(pa.prior_period_adjustments, 0.00) AS prior_period_adjustments,
-        COALESCE(dr.security_deposit, 5000.00) AS security_deposit_target,
-        COALESCE(dr.security_deposit, 5000.00) AS security_deposit_paid,
+        COALESCE(dr.security_deposit, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END) AS security_deposit_target,
+        GREATEST(0.00, COALESCE(dr.security_deposit, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END) - COALESCE(pd.pending_deposit, 0.00)) AS security_deposit_paid,
         0.00 AS deposit_deduction_current_week,
-        0.00 AS pending_deposit,
+        COALESCE(pd.pending_deposit, 0.00) AS pending_deposit,
         
         -- Net Signed Balance: preserves advance payments (<0) and debts (>0)
         ROUND(
@@ -345,11 +364,13 @@ BEGIN
     LEFT JOIN prev_dues pd ON ap.partner_id = pd.partner_id
     LEFT JOIN existing_payments ep ON ap.partner_id = ep.partner_id
     LEFT JOIN LATERAL (
-        SELECT account_number, ifsc_code, driver_name, security_deposit FROM public.core_partner_onboarding 
+        SELECT account_number, ifsc_code, driver_name, security_deposit, city FROM public.core_partner_onboarding 
         WHERE partner_id = ap.partner_id LIMIT 1
     ) dr ON TRUE
     ON CONFLICT (week_id, partner_id) DO UPDATE SET
         partner_name = COALESCE(EXCLUDED.partner_name, public.hisaab_partner_weekly.partner_name),
+        partner_type = COALESCE(EXCLUDED.partner_type, public.hisaab_partner_weekly.partner_type),
+        city = COALESCE(EXCLUDED.city, public.hisaab_partner_weekly.city),
         allotted_cars_count = EXCLUDED.allotted_cars_count,
         total_onroad_days = EXCLUDED.total_onroad_days,
         total_trips = EXCLUDED.total_trips,
@@ -368,6 +389,7 @@ BEGIN
         amount_paid_during_week = COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00),
         security_deposit_target = EXCLUDED.security_deposit_target,
         security_deposit_paid = EXCLUDED.security_deposit_paid,
+        pending_deposit = EXCLUDED.pending_deposit,
         
         -- Recalculate signed balance
         total_outstanding = ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2),

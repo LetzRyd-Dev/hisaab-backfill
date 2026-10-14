@@ -57,8 +57,13 @@ BEGIN
         updated_at = CURRENT_TIMESTAMP
     WHERE week_id = p_week_id;
 
-    -- 2. Transition associated partner weekly records back to OPEN for updates
+    -- 2. Transition associated partner and vehicle weekly records back to OPEN for updates
     UPDATE public.hisaab_partner_weekly
+    SET settlement_status = 'OPEN',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE week_id = p_week_id AND settlement_status = 'LOCKED';
+
+    UPDATE public.hisaab_vehicle_weekly
     SET settlement_status = 'OPEN',
         updated_at = CURRENT_TIMESTAMP
     WHERE week_id = p_week_id AND settlement_status = 'LOCKED';
@@ -123,8 +128,13 @@ BEGIN
         updated_at = CURRENT_TIMESTAMP
     WHERE week_id = p_week_id;
 
-    -- 2. Lock associated partner weekly records
+    -- 2. Lock associated partner and vehicle weekly records
     UPDATE public.hisaab_partner_weekly
+    SET settlement_status = 'LOCKED',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE week_id = p_week_id AND settlement_status <> 'LOCKED';
+
+    UPDATE public.hisaab_vehicle_weekly
     SET settlement_status = 'LOCKED',
         updated_at = CURRENT_TIMESTAMP
     WHERE week_id = p_week_id AND settlement_status <> 'LOCKED';
