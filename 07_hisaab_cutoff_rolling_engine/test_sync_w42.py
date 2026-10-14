@@ -1,4 +1,5 @@
 import sys
+from decimal import Decimal
 sys.path.insert(0, r'c:\Users\anura\Downloads\hisaab-backfill')
 from config import SessionLocal
 from sqlalchemy import text
@@ -31,7 +32,7 @@ try:
     print(f"  Sum Current Week OS:          INR {float(totals[2]):,.2f} (Expected: INR 3,223,363.78)")
     print(f"  Sum Total Outstanding:        INR {float(totals[3]):,.2f} (Expected: INR 39,364,955.68)")
     print(f"  Sum Net Amount To Collect:    INR {float(totals[4]):,.2f} (Expected: INR 42,118,662.26)")
-    print(f"  Sum Net Bank Payout (Credit): INR {float(totals[5]):,.2f} (Expected: INR 2,753,706.58)")
+    print(f"  Sum Net Bank Payout (Credit): INR {float(totals[5]):,.2f} (Expected: INR 2,750,887.96 [Excludes internal fleet])")
     print(f"  Sum Pending Security Deposit: INR {float(totals[6]):,.2f} (Expected: INR 8,538,918.00)")
 
     assert totals[0] == 2481, f"Expected 2481 partners, got {totals[0]}"
@@ -39,8 +40,18 @@ try:
     assert abs(float(totals[2]) - 3223363.78) < 0.05, f"Expected 3223363.78, got {totals[2]}"
     assert abs(float(totals[3]) - 39364955.68) < 0.05, f"Expected 39364955.68, got {totals[3]}"
     assert abs(float(totals[4]) - 42118662.26) < 0.05, f"Expected 42118662.26, got {totals[4]}"
-    assert abs(float(totals[5]) - 2753706.58) < 0.05, f"Expected 2753706.58, got {totals[5]}"
+    assert abs(float(totals[5]) - 2750887.96) < 0.05, f"Expected 2750887.96, got {totals[5]}"
     assert abs(float(totals[6]) - 8538918.00) < 0.05, f"Expected 8538918.00, got {totals[6]}"
+
+    # Verify SYSTEM_ONBOARDED safety
+    sys_row = db.execute(text("""
+        SELECT partner_type, net_bank_payout, security_deposit_target 
+        FROM hisaab_partner_weekly 
+        WHERE week_id = 'CY26WK42' AND partner_id = 'SYSTEM_ONBOARDED';
+    """)).fetchone()
+    assert sys_row[0] == 'Fleet Internal', f"Expected Fleet Internal, got {sys_row[0]}"
+    assert sys_row[1] == Decimal('0.00'), f"Expected 0.00 payout, got {sys_row[1]}"
+    assert sys_row[2] == Decimal('0.00'), f"Expected 0.00 deposit target, got {sys_row[2]}"
 
     # 2. City breakdown
     cities = db.execute(text("""

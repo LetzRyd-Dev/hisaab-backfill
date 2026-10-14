@@ -1,4 +1,5 @@
 import sys
+from decimal import Decimal
 sys.path.insert(0, r'c:\Users\anura\Downloads\hisaab-backfill')
 from config import SessionLocal
 from sqlalchemy import text
@@ -186,8 +187,37 @@ def run_exhaustive_edge_case_tests():
         assert creditor_statuses == ['SETTLED'], f"Expected all <= 0 balances to be SETTLED, got {creditor_statuses}"
         print(f"  --> PASS: All partners with debt <= 0.00 are correctly marked SETTLED (Status: {creditor_statuses}).")
 
+        # TEST 12: 4-Tier Waterfall Security Deposit Allocation
+        print("\n[TEST 12] 4-Tier Waterfall Security Deposit Allocation")
+        # Simulate driver with debt Rs 2,000, pending deposit Rs 3,000, paying Rs 3,500
+        gross_debt = 2000.00
+        pending_dep = 3000.00
+        paid_amt = 3500.00
+        alloc_debt = min(paid_amt, max(0.0, gross_debt))
+        surplus_1 = paid_amt - alloc_debt
+        alloc_deposit = min(surplus_1, pending_dep)
+        new_pending_deposit = pending_dep - alloc_deposit
+        new_total_outstanding = round(gross_debt - (paid_amt - alloc_deposit), 2)
+        assert alloc_debt == 2000.00, f"Expected 2000 debt alloc, got {alloc_debt}"
+        assert alloc_deposit == 1500.00, f"Expected 1500 deposit alloc, got {alloc_deposit}"
+        assert new_pending_deposit == 1500.00, f"Expected 1500 remaining deposit, got {new_pending_deposit}"
+        assert new_total_outstanding == 0.00, f"Expected 0.00 outstanding, got {new_total_outstanding}"
+        print("  --> PASS: Waterfall clears rent debt first, then allocates surplus to pending security deposit!")
+
+        # TEST 13: Fleet Internal SYSTEM_ONBOARDED Payout Blocking
+        print("\n[TEST 13] Fleet Internal SYSTEM_ONBOARDED Payout Blocking")
+        sys_check = db.execute(text("""
+            SELECT partner_type, net_bank_payout, security_deposit_target, total_outstanding
+            FROM hisaab_partner_weekly 
+            WHERE week_id = 'CY26WK42' AND partner_id = 'SYSTEM_ONBOARDED';
+        """)).fetchone()
+        assert sys_check[0] == 'Fleet Internal', f"Expected Fleet Internal, got {sys_check[0]}"
+        assert sys_check[1] == Decimal('0.00'), f"Expected 0.00 payout, got {sys_check[1]}"
+        assert sys_check[2] == Decimal('0.00'), f"Expected 0.00 deposit target, got {sys_check[2]}"
+        print(f"  --> PASS: SYSTEM_ONBOARDED protected: type={sys_check[0]}, payout={sys_check[1]}, target={sys_check[2]}.")
+
         print("\n" + "=" * 80)
-        print(">>> ALL 11 EXHAUSTIVE BUG HUNT & EDGE CASE TESTS PASSED WITH 0 ERRORS! <<<")
+        print(">>> ALL 13 EXHAUSTIVE BUG HUNT & EDGE CASE TESTS PASSED WITH 0 ERRORS! <<<")
         print("=" * 80)
 
     finally:

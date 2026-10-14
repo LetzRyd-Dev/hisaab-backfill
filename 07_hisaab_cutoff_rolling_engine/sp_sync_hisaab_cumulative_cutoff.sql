@@ -316,7 +316,7 @@ BEGIN
         v_week_end,
         ap.partner_id,
         COALESCE(v.partner_name, dr.driver_name, pd.op_name, ap.partner_id) AS partner_name,
-        COALESCE(v.partner_type, pd.op_type, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 'Operator' ELSE 'Individual' END) AS partner_type,
+        base.calc_partner_type AS partner_type,
         CASE 
             WHEN UPPER(COALESCE(v.city, dr.city, pd.op_city, ap.partner_id, '')) LIKE '%BLR%' 
                  OR UPPER(COALESCE(v.city, dr.city, pd.op_city, '')) LIKE '%BANGALORE%' THEN 'BLR'
@@ -338,47 +338,46 @@ BEGIN
         COALESCE(v.total_dead_mile_penalty, 0.00) AS total_dead_mile_penalty,
         ROUND(COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00), 2) AS current_week_os,
         COALESCE(pd.previous_outstanding, 0.00) AS previous_outstanding,
-        COALESCE(ep.amount_paid_during_week, 0.00) AS amount_paid_during_week,
+        base.total_paid AS amount_paid_during_week,
         COALESCE(pa.prior_period_adjustments, 0.00) AS prior_period_adjustments,
-        COALESCE(
-            dr.security_deposit,
-            CASE WHEN pd.deposit_paid_baseline IS NOT NULL THEN (pd.deposit_paid_baseline + COALESCE(pd.pending_deposit, 0.00)) ELSE NULL END,
-            CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END
-        ) AS security_deposit_target,
-        COALESCE(
-            pd.deposit_paid_baseline,
-            GREATEST(0.00, COALESCE(dr.security_deposit, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END) - COALESCE(pd.pending_deposit, 0.00))
-        ) AS security_deposit_paid,
-        0.00 AS deposit_deduction_current_week,
-        COALESCE(pd.pending_deposit, 0.00) AS pending_deposit,
+        base.calc_deposit_target AS security_deposit_target,
         
-        -- Net Signed Balance: preserves advance payments (<0) and debts (>0)
-        ROUND(
-            (COALESCE(pd.previous_outstanding, 0.00) 
-             + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) 
-             + COALESCE(pa.prior_period_adjustments, 0.00)) 
-            - COALESCE(ep.amount_paid_during_week, 0.00), 
-            2
-        ) AS total_outstanding,
-        
-        -- Net Bank Payout (when earnings or advance payments exceed rent + debt)
+        -- Tier 2 Waterfall: Deposit Paid
         CASE 
-            WHEN ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) < 0.00
-            THEN ABS(ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2))
+            WHEN ap.partner_id = 'SYSTEM_ONBOARDED' THEN 0.00
+            ELSE ROUND(
+                COALESCE(
+                    pd.deposit_paid_baseline,
+                    GREATEST(0.00, base.calc_deposit_target - base.orig_pending_deposit)
+                ) + wf.alloc_deposit, 
+                2
+            )
+        END AS security_deposit_paid,
+        0.00 AS deposit_deduction_current_week,
+        
+        -- Tier 2 Waterfall: Pending Deposit
+        CASE 
+            WHEN ap.partner_id = 'SYSTEM_ONBOARDED' THEN 0.00
+            ELSE ROUND(base.orig_pending_deposit - wf.alloc_deposit, 2)
+        END AS pending_deposit,
+        
+        -- Net Signed Balance (Preserves advance payments and offsets rent debt)
+        wf.calc_total_outstanding AS total_outstanding,
+        
+        -- Net Bank Payout (Disbursable credit only; internal fleet accounts blocked from cash payout)
+        CASE 
+            WHEN ap.partner_id = 'SYSTEM_ONBOARDED' THEN 0.00
+            WHEN wf.calc_total_outstanding < 0.00 THEN ABS(wf.calc_total_outstanding)
             ELSE 0.00
         END AS net_bank_payout,
         
         -- Net Amount to Collect (when driver owes company)
-        GREATEST(0.00, 
-            ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2)
-        ) AS net_amount_to_collect,
+        GREATEST(0.00, wf.calc_total_outstanding) AS net_amount_to_collect,
         
         CASE 
-            WHEN ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) <= 0.00
-            THEN 'SETTLED'
-            WHEN COALESCE(ep.amount_paid_during_week, 0.00) > 0.00
-                 AND ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) > 0.00
-            THEN 'PARTIAL'
+            WHEN ap.partner_id = 'SYSTEM_ONBOARDED' THEN 'SETTLED'
+            WHEN wf.calc_total_outstanding <= 0.00 THEN 'SETTLED'
+            WHEN base.total_paid > 0.00 AND wf.calc_total_outstanding > 0.00 THEN 'PARTIAL'
             ELSE 'OPEN'
         END AS settlement_status,
         COALESCE(dr.account_number, pd.prev_payout_account_number) AS payout_account_number,
@@ -394,6 +393,42 @@ BEGIN
         SELECT account_number, ifsc_code, driver_name, security_deposit, city FROM public.core_partner_onboarding 
         WHERE partner_id = ap.partner_id LIMIT 1
     ) dr ON TRUE
+    CROSS JOIN LATERAL (
+        SELECT 
+            CASE 
+                WHEN ap.partner_id = 'SYSTEM_ONBOARDED' THEN 'Fleet Internal'
+                ELSE COALESCE(v.partner_type, pd.op_type, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 'Operator' ELSE 'Individual' END)
+            END AS calc_partner_type,
+            
+            CASE 
+                WHEN ap.partner_id = 'SYSTEM_ONBOARDED' THEN 0.00
+                ELSE COALESCE(
+                    dr.security_deposit,
+                    CASE WHEN pd.deposit_paid_baseline IS NOT NULL THEN (pd.deposit_paid_baseline + COALESCE(pd.pending_deposit, 0.00)) ELSE NULL END,
+                    CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END
+                )
+            END AS calc_deposit_target,
+            
+            ROUND(
+                COALESCE(pd.previous_outstanding, 0.00) 
+                + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) 
+                + COALESCE(pa.prior_period_adjustments, 0.00), 
+                2
+            ) AS gross_debt,
+            
+            COALESCE(ep.amount_paid_during_week, 0.00) AS total_paid,
+            COALESCE(pd.pending_deposit, 0.00) AS orig_pending_deposit
+    ) base
+    CROSS JOIN LATERAL (
+        SELECT 
+            -- Tier 2: Surplus payment allocated to pending security deposit
+            LEAST(
+                GREATEST(0.00, base.total_paid - GREATEST(0.00, base.gross_debt)),
+                base.orig_pending_deposit
+            ) AS alloc_deposit,
+            
+            ROUND(base.gross_debt - (base.total_paid - LEAST(GREATEST(0.00, base.total_paid - GREATEST(0.00, base.gross_debt)), base.orig_pending_deposit)), 2) AS calc_total_outstanding
+    ) wf
     ON CONFLICT (week_id, partner_id) DO UPDATE SET
         partner_name = COALESCE(EXCLUDED.partner_name, public.hisaab_partner_weekly.partner_name),
         partner_type = COALESCE(EXCLUDED.partner_type, public.hisaab_partner_weekly.partner_type),
@@ -417,23 +452,10 @@ BEGIN
         security_deposit_target = EXCLUDED.security_deposit_target,
         security_deposit_paid = EXCLUDED.security_deposit_paid,
         pending_deposit = EXCLUDED.pending_deposit,
-        
-        -- Recalculate signed balance
-        total_outstanding = ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2),
-        net_bank_payout = CASE 
-            WHEN (EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)) < 0.00
-            THEN ABS(ROUND(EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2))
-            ELSE 0.00 
-        END,
-        net_amount_to_collect = GREATEST(0.00, ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2)),
-        settlement_status = CASE 
-            WHEN ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2) <= 0.00
-            THEN 'SETTLED'
-            WHEN COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00) > 0.00
-                 AND ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2) > 0.00
-            THEN 'PARTIAL'
-            ELSE 'OPEN'
-        END,
+        total_outstanding = EXCLUDED.total_outstanding,
+        net_bank_payout = EXCLUDED.net_bank_payout,
+        net_amount_to_collect = EXCLUDED.net_amount_to_collect,
+        settlement_status = EXCLUDED.settlement_status,
         payout_account_number = COALESCE(EXCLUDED.payout_account_number, public.hisaab_partner_weekly.payout_account_number),
         payout_ifsc = COALESCE(EXCLUDED.payout_ifsc, public.hisaab_partner_weekly.payout_ifsc),
         updated_at = CURRENT_TIMESTAMP
