@@ -132,12 +132,12 @@ def run_comprehensive_audit():
                OR (week_id BETWEEN 'CY26WK01' AND 'CY26WK35');
         """)).fetchone()
 
-        print(f"  • Backfilled Vehicle-Weeks: {custody_rent[0]:,}")
-        print(f"  • Data Completeness: Null Veh={custody_rent[1]}, Null Partner={custody_rent[2]}, Null City={custody_rent[3]}")
-        print(f"  • Total Onroad Days Logged: {custody_rent[4]:,} (Total Allotted Days: {custody_rent[5]:,})")
-        print(f"  • Total Contracted Lease Rent: Rs. {custody_rent[6]:,.2f}")
-        print(f"  • Onroad Days with Zero Rent: {custody_rent[7]}")
-        print(f"  • Unassigned/Zero Custody with Non-Zero Rent: {custody_rent[8]}")
+        print(f"  • Backfilled Vehicle-Weeks: {(custody_rent[0] or 0):,}")
+        print(f"  • Data Completeness: Null Veh={custody_rent[1] or 0}, Null Partner={custody_rent[2] or 0}, Null City={custody_rent[3] or 0}")
+        print(f"  • Total Onroad Days Logged: {(custody_rent[4] or 0):,} (Total Allotted Days: {(custody_rent[5] or 0):,})")
+        print(f"  • Total Contracted Lease Rent: Rs. {(custody_rent[6] or 0.0):,.2f}")
+        print(f"  • Onroad Days with Zero Rent: {custody_rent[7] or 0}")
+        print(f"  • Unassigned/Zero Custody with Non-Zero Rent: {custody_rent[8] or 0}")
 
         if custody_rent[1] == 0 and custody_rent[2] == 0 and custody_rent[3] == 0 and custody_rent[7] == 0 and custody_rent[8] == 0:
             print("  ==> [PASS] Dimension 3: Custody & Contracted Lease Rent 100% verified.\n")
@@ -162,10 +162,10 @@ def run_comprehensive_audit():
                OR (week_id BETWEEN 'CY26WK01' AND 'CY26WK35');
         """)).fetchone()
 
-        print(f"  • Vehicles with Adjustments: {adj_challan[0]:,} | Total Adjustment Amount: Rs. {adj_challan[1]:,.2f}")
-        print(f"  • Vehicles with Challans: {adj_challan[2]:,} | Total Traffic Challan Fines: Rs. {adj_challan[3]:,.2f}")
+        print(f"  • Vehicles with Adjustments: {(adj_challan[0] or 0):,} | Total Adjustment Amount: Rs. {(adj_challan[1] or 0.0):,.2f}")
+        print(f"  • Vehicles with Challans: {(adj_challan[2] or 0):,} | Total Traffic Challan Fines: Rs. {(adj_challan[3] or 0.0):,.2f}")
 
-        if adj_challan[0] > 0 and adj_challan[2] > 0:
+        if (adj_challan[0] or 0) > 0 and (adj_challan[2] or 0) > 0:
             print("  ==> [PASS] Dimension 4: Adjustments & Traffic Challans verified.\n")
             passed_checks += 1
         else:
@@ -186,10 +186,10 @@ def run_comprehensive_audit():
                OR (week_id BETWEEN 'CY26WK01' AND 'CY26WK35');
         """)).fetchone()
 
-        print(f"  • Vehicles Credited Uber Weekly Incentives: {uber_stats[0]:,}")
-        print(f"  • Total Uber Weekly Incentives Credited: Rs. {uber_stats[1]:,.2f}")
+        print(f"  • Vehicles Credited Uber Weekly Incentives: {(uber_stats[0] or 0):,}")
+        print(f"  • Total Uber Weekly Incentives Credited: Rs. {(uber_stats[1] or 0.0):,.2f}")
 
-        if uber_stats[0] > 0 and uber_stats[1] > Decimal("60000000.00"):
+        if (uber_stats[0] or 0) > 0 and (uber_stats[1] or 0) > Decimal("60000000.00"):
             print("  ==> [PASS] Dimension 5: Real Uber Weekly Incentives (Rs 6.17 Cr) verified.\n")
             passed_checks += 1
         else:
@@ -213,11 +213,11 @@ def run_comprehensive_audit():
                OR (week_id BETWEEN 'CY26WK01' AND 'CY26WK35');
         """)).fetchone()
 
-        print(f"  • Vehicles with Dead Mileage Tracked: {gps_stats[0]:,}")
-        print(f"  • Total Dead Mileage: {float(gps_stats[1]):,.2f} KM (3.65 Crore KM)")
-        print(f"  • Individual Bangalore Drivers Penalized: {gps_stats[2]:,}")
-        print(f"  • Total Dead-Mile Penalty Added: Rs. {gps_stats[3]:,.2f}")
-        print(f"  • Non-Bangalore Vehicles Erroneously Penalized: {gps_stats[4]}")
+        print(f"  • Vehicles with Dead Mileage Tracked: {(gps_stats[0] or 0):,}")
+        print(f"  • Total Dead Mileage: {float(gps_stats[1] or 0):,.2f} KM (3.65 Crore KM)")
+        print(f"  • Individual Bangalore Drivers Penalized: {(gps_stats[2] or 0):,}")
+        print(f"  • Total Dead-Mile Penalty Added: Rs. {(gps_stats[3] or 0.0):,.2f}")
+        print(f"  • Non-Bangalore Vehicles Erroneously Penalized: {gps_stats[4] or 0}")
 
         if gps_stats[0] > 0 and gps_stats[4] == 0:
             print("  ==> [PASS] Dimension 6: GPS telematics & Bangalore penalty rules 100% verified.\n")

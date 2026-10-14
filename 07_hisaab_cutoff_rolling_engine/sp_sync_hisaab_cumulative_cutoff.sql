@@ -317,7 +317,13 @@ BEGIN
         ap.partner_id,
         COALESCE(v.partner_name, dr.driver_name, pd.op_name, ap.partner_id) AS partner_name,
         COALESCE(v.partner_type, pd.op_type, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 'Operator' ELSE 'Individual' END) AS partner_type,
-        COALESCE(v.city, dr.city, pd.op_city, CASE WHEN ap.partner_id ILIKE '%BLR%' THEN 'BLR' WHEN ap.partner_id ILIKE '%MUM%' THEN 'MUM' ELSE 'HYD' END) AS city,
+        CASE 
+            WHEN UPPER(COALESCE(v.city, dr.city, pd.op_city, ap.partner_id, '')) LIKE '%BLR%' 
+                 OR UPPER(COALESCE(v.city, dr.city, pd.op_city, '')) LIKE '%BANGALORE%' THEN 'BLR'
+            WHEN UPPER(COALESCE(v.city, dr.city, pd.op_city, ap.partner_id, '')) LIKE '%MUM%' 
+                 OR UPPER(COALESCE(v.city, dr.city, pd.op_city, '')) LIKE '%MUMBAI%' THEN 'MUM'
+            ELSE 'HYD'
+        END AS city,
         COALESCE(v.allotted_cars_count, 0) AS allotted_cars_count,
         COALESCE(v.total_onroad_days, 0) AS total_onroad_days,
         COALESCE(v.total_trips, 0) AS total_trips,
