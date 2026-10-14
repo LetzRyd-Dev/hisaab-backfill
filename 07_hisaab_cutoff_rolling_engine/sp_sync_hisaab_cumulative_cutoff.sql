@@ -141,7 +141,7 @@ BEGIN
         FROM public.hisaab_adjustments_ledger
         WHERE settlement_week_id = p_week_id 
           AND is_prior_period = TRUE
-          AND approval_status = 'Approved'
+          AND UPPER(TRIM(COALESCE(approval_status, ''))) = 'APPROVED'
           AND (p_partner IS NULL OR partner_id = p_partner)
         GROUP BY partner_id
     ),
@@ -158,7 +158,7 @@ BEGIN
         FROM public.hisaab_adjustments_ledger
         WHERE settlement_week_id = p_week_id 
           AND is_prior_period = FALSE
-          AND approval_status = 'Approved'
+          AND UPPER(TRIM(COALESCE(approval_status, ''))) = 'APPROVED'
           AND (p_partner IS NULL OR partner_id = p_partner)
         GROUP BY partner_id
     ),
@@ -180,12 +180,18 @@ BEGIN
                 -- Priority 2: Immediate week after cutoff (where previous week was the cutoff week)
                 WHEN v_enable_roll_forward = TRUE 
                      AND v_prev_week_id = v_cutoff_week_id THEN 
-                     COALESCE(pw.total_outstanding, prev_op.opening_balance_due, 0.00)
+                     CASE 
+                         WHEN pw.bank_utr_reference IS NOT NULL AND pw.total_outstanding < 0.00 THEN 0.00
+                         ELSE COALESCE(pw.total_outstanding, prev_op.opening_balance_due, 0.00)
+                     END
                 
                 -- Priority 3: Subsequent rolling weeks (CY26WK43 and beyond)
                 WHEN v_enable_roll_forward = TRUE 
                      AND v_prev_week_id > v_cutoff_week_id THEN 
-                     COALESCE(pw.total_outstanding, 0.00)
+                     CASE 
+                         WHEN pw.bank_utr_reference IS NOT NULL AND pw.total_outstanding < 0.00 THEN 0.00
+                         ELSE COALESCE(pw.total_outstanding, 0.00)
+                     END
                 
                 ELSE 0.00 
             END AS previous_outstanding,
@@ -362,7 +368,7 @@ BEGIN
         ) AS net_amount_to_collect,
         
         CASE 
-            WHEN ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) = 0.00
+            WHEN ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) <= 0.00
             THEN 'SETTLED'
             WHEN COALESCE(ep.amount_paid_during_week, 0.00) > 0.00
                  AND ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) > 0.00
@@ -415,7 +421,7 @@ BEGIN
         END,
         net_amount_to_collect = GREATEST(0.00, ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2)),
         settlement_status = CASE 
-            WHEN ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2) = 0.00
+            WHEN ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2) <= 0.00
             THEN 'SETTLED'
             WHEN COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00) > 0.00
                  AND ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2) > 0.00

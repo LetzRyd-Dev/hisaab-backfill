@@ -103,7 +103,8 @@ class CumulativeHisaabEngine:
         Routes an adjustment. If origin week is locked, routes to target open week.
         Polarity: 'DEBIT' increases dues (+amount), 'CREDIT' decreases dues (-amount).
         """
-        signed_amount = amount if polarity.upper() == 'DEBIT' else -amount
+        clean_pol = str(polarity or 'DEBIT').strip().upper()
+        signed_amount = amount if clean_pol in ('DEBIT', 'DR') else -amount
         if origin_week_id in self.locked_weeks:
             print(f"Origin week {origin_week_id} is locked. Routing {adj_type} ({polarity} Rs {amount}) "
                   f"to next open week {target_week_id} as prior_period_adjustment.")
@@ -148,7 +149,7 @@ class CumulativeHisaabEngine:
                 prev_weeks = [s for s in self.history.get(pid, []) if s.week_id < week_id]
                 if prev_weeks:
                     prev_week_state = prev_weeks[-1]
-                    prev_os = max(0.0, prev_week_state.total_outstanding)
+                    prev_os = prev_week_state.total_outstanding
                 else:
                     prev_os = 0.0
 
@@ -156,10 +157,10 @@ class CumulativeHisaabEngine:
             current_period_os = round(h.current_week_os + net_prior_adj, 2)
 
             # Cumulative Total Outstanding Formula:
-            # total_outstanding = max(0.0, (previous_outstanding + current_period_os) - amount_paid_during_week)
+            # Preserves signed balance: positive = debt, negative = advance credit
             gross_dues = prev_os + current_period_os
             net_balance = round(gross_dues - paid, 2)
-            total_os = max(0.0, net_balance)
+            total_os = net_balance
 
             to_collect = max(0.0, net_balance)
             to_pay = max(0.0, -net_balance)
