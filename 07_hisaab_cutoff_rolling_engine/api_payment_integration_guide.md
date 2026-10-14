@@ -139,7 +139,7 @@ SET
     END,
     
     settlement_status = CASE 
-        WHEN ROUND((pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) - (pw.amount_paid_during_week + :paid_amount), 2) = 0.00 
+        WHEN ROUND((pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) - (pw.amount_paid_during_week + :paid_amount), 2) <= 0.00 
              THEN 'SETTLED'
         WHEN (pw.amount_paid_during_week + :paid_amount) > 0.00 
              AND ROUND((pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) - (pw.amount_paid_during_week + :paid_amount), 2) > 0.00

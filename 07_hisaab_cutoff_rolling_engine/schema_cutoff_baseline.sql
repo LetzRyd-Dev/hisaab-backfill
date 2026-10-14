@@ -319,26 +319,101 @@ $$ LANGUAGE plpgsql;
 -- 7. Immutability Trigger: Prevent Updates to Locked Weeks
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.fn_prevent_locked_partner_weekly_update()
-RETURNS TRIGGER AS $$
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
 DECLARE
     v_is_locked BOOLEAN;
+    v_target_week VARCHAR;
 BEGIN
-    SELECT is_locked INTO v_is_locked
-    FROM public.hisaab_settlement_weeks
-    WHERE week_id = OLD.week_id;
+    v_target_week := CASE WHEN TG_OP = 'INSERT' THEN NEW.week_id ELSE OLD.week_id END;
 
-    IF v_is_locked = TRUE OR OLD.settlement_status = 'LOCKED' THEN
-        RAISE EXCEPTION 'Week % is locked. Data in this week is immutable.', OLD.week_id;
+    -- Check master week lock status
+    SELECT COALESCE(is_locked, FALSE) INTO v_is_locked
+    FROM public.hisaab_settlement_weeks
+    WHERE week_id = v_target_week;
+
+    -- Case 1: INSERT operation (Block inserts into locked weeks)
+    IF TG_OP = 'INSERT' THEN
+        IF v_is_locked = TRUE THEN
+            RAISE EXCEPTION 'Settlement week % is locked. New records cannot be inserted.', NEW.week_id;
+        END IF;
+        RETURN NEW;
     END IF;
+
+    -- Case 2: DELETE operation
+    IF TG_OP = 'DELETE' THEN
+        IF v_is_locked = TRUE OR OLD.settlement_status = 'LOCKED' THEN
+            RAISE EXCEPTION 'Settlement week % is locked. Records cannot be deleted.', OLD.week_id;
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    -- Case 3: UPDATE operation
+    IF TG_OP = 'UPDATE' THEN
+        -- Allow administrative lock transition: when master is being locked, allow setting settlement_status = 'LOCKED'
+        -- but forbid modifying financial columns during the status transition
+        IF NEW.settlement_status = 'LOCKED' AND OLD.settlement_status <> 'LOCKED' THEN
+            IF ROW(NEW.total_net_rent_billed, NEW.total_platform_earnings, NEW.total_cash_collected,
+                   NEW.total_adjustments, NEW.current_week_os, NEW.previous_outstanding,
+                   NEW.amount_paid_during_week, NEW.total_outstanding, NEW.net_bank_payout,
+                   NEW.net_amount_to_collect)
+               IS DISTINCT FROM
+               ROW(OLD.total_net_rent_billed, OLD.total_platform_earnings, OLD.total_cash_collected,
+                   OLD.total_adjustments, OLD.current_week_os, OLD.previous_outstanding,
+                   OLD.amount_paid_during_week, OLD.total_outstanding, OLD.net_bank_payout,
+                   OLD.net_amount_to_collect) THEN
+                RAISE EXCEPTION 'Cannot modify financial data while transitioning settlement_status to LOCKED in week %.', OLD.week_id;
+            END IF;
+            RETURN NEW;
+        END IF;
+
+        -- Allow administrative unlock transition: when master is unlocked, allow transitioning settlement_status to 'OPEN'
+        IF v_is_locked = FALSE AND OLD.settlement_status = 'LOCKED' AND NEW.settlement_status = 'OPEN' THEN
+            RETURN NEW;
+        END IF;
+
+        -- Block update if master week is locked or record is locked, UNLESS only non-financial banking metadata is being updated
+        IF v_is_locked = TRUE OR OLD.settlement_status = 'LOCKED' THEN
+            -- Check if any financial, structural, or identity column is being modified
+            IF ROW(NEW.total_net_rent_billed, NEW.total_platform_earnings, NEW.total_cash_collected,
+                   NEW.total_platform_incentives, NEW.total_adjustments, NEW.total_challans,
+                   NEW.total_accidents, NEW.total_tds, NEW.total_dead_mile_penalty,
+                   NEW.current_week_os, NEW.previous_outstanding, NEW.amount_paid_during_week,
+                   NEW.prior_period_adjustments, NEW.security_deposit_target, NEW.security_deposit_paid,
+                   NEW.deposit_deduction_current_week, NEW.pending_deposit, NEW.total_outstanding,
+                   NEW.net_bank_payout, NEW.net_amount_to_collect, NEW.settlement_status,
+                   NEW.allotted_cars_count, NEW.total_onroad_days, NEW.total_trips,
+                   NEW.week_id, NEW.partner_id)
+               IS DISTINCT FROM
+               ROW(OLD.total_net_rent_billed, OLD.total_platform_earnings, OLD.total_cash_collected,
+                   OLD.total_platform_incentives, OLD.total_adjustments, OLD.total_challans,
+                   OLD.total_accidents, OLD.total_tds, OLD.total_dead_mile_penalty,
+                   OLD.current_week_os, OLD.previous_outstanding, OLD.amount_paid_during_week,
+                   OLD.prior_period_adjustments, OLD.security_deposit_target, OLD.security_deposit_paid,
+                   OLD.deposit_deduction_current_week, OLD.pending_deposit, OLD.total_outstanding,
+                   OLD.net_bank_payout, OLD.net_amount_to_collect, OLD.settlement_status,
+                   OLD.allotted_cars_count, OLD.total_onroad_days, OLD.total_trips,
+                   OLD.week_id, OLD.partner_id) THEN
+                RAISE EXCEPTION 'Settlement week % is locked. Financial data in this week is immutable.', OLD.week_id;
+            END IF;
+
+            -- Financial columns are 100% identical: allow updating non-financial banking reconciliation fields
+            -- (e.g. bank_utr_reference, payout_account_number, payout_ifsc, updated_at)
+            RETURN NEW;
+        END IF;
+
+        RETURN NEW;
+    END IF;
+
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$function$;
 
 DROP TRIGGER IF EXISTS trg_prevent_locked_partner_weekly ON public.hisaab_partner_weekly;
 CREATE TRIGGER trg_prevent_locked_partner_weekly
-BEFORE UPDATE OR DELETE ON public.hisaab_partner_weekly
-FOR EACH ROW
-EXECUTE FUNCTION public.fn_prevent_locked_partner_weekly_update();
+BEFORE INSERT OR UPDATE OR DELETE ON public.hisaab_partner_weekly
+FOR EACH ROW EXECUTE FUNCTION public.fn_prevent_locked_partner_weekly_update();
 
 
 -- ----------------------------------------------------------------------------

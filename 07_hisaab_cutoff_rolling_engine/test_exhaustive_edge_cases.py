@@ -146,8 +146,48 @@ def run_exhaustive_edge_case_tests():
         assert "COALESCE(cla.current_ledger_adjustments, 0.00)" in proc_def, "current_ledger_adjustments missing from COALESCE!"
         print("  --> PASS: Partner-level ledger adjustments (is_prior_period = FALSE) are captured into weekly OS.")
 
+        # TEST 10: Post-Lock Banking Reconciliation Metadata vs Financial Immutability
+        print("\n[TEST 10] Post-Lock Banking Reconciliation Metadata vs Financial Immutability")
+        try:
+            # Temporarily lock week in transaction
+            db.execute(text("UPDATE hisaab_settlement_weeks SET is_locked = TRUE WHERE week_id = 'CY26WK42';"))
+            
+            # Updating bank_utr_reference MUST SUCCEED (reconciliation requirement)
+            db.execute(text("""
+                UPDATE hisaab_partner_weekly 
+                SET bank_utr_reference = 'UTR_VERIFY_9999'
+                WHERE week_id = 'CY26WK42' AND partner_id = 'LETZBLR6206163008';
+            """))
+            print("  --> PASS: Post-lock bank UTR reference successfully recorded without throwing error.")
+
+            # Modifying financial data MUST BE BLOCKED
+            fin_blocked = False
+            try:
+                db.execute(text("""
+                    UPDATE hisaab_partner_weekly 
+                    SET total_outstanding = 0.00
+                    WHERE week_id = 'CY26WK42' AND partner_id = 'LETZBLR6206163008';
+                """))
+            except Exception:
+                fin_blocked = True
+            
+            assert fin_blocked, "Trigger failed to block financial modification on locked week!"
+            print("  --> PASS: Modifying financial data on locked week was strictly blocked by trigger.")
+        finally:
+            db.rollback()
+
+        # TEST 11: Advance Overpayment / Negative Balance Marked SETTLED
+        print("\n[TEST 11] Advance Overpayment / Negative Balance Marked SETTLED")
+        creditor_statuses = db.execute(text("""
+            SELECT DISTINCT settlement_status 
+            FROM hisaab_partner_weekly 
+            WHERE week_id = 'CY26WK42' AND total_outstanding <= 0.00;
+        """)).scalars().all()
+        assert creditor_statuses == ['SETTLED'], f"Expected all <= 0 balances to be SETTLED, got {creditor_statuses}"
+        print(f"  --> PASS: All partners with debt <= 0.00 are correctly marked SETTLED (Status: {creditor_statuses}).")
+
         print("\n" + "=" * 80)
-        print(">>> ALL 9 EXHAUSTIVE BUG HUNT & EDGE CASE TESTS PASSED WITH 0 ERRORS! <<<")
+        print(">>> ALL 11 EXHAUSTIVE BUG HUNT & EDGE CASE TESTS PASSED WITH 0 ERRORS! <<<")
         print("=" * 80)
 
     finally:

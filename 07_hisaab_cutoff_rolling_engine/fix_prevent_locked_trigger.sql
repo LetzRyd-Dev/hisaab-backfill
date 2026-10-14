@@ -59,9 +59,34 @@ BEGIN
             RETURN NEW;
         END IF;
 
-        -- Block any update if either the master week is locked or the record itself is locked
+        -- Block update if master week is locked or record is locked, UNLESS only non-financial banking metadata is being updated
         IF v_is_locked = TRUE OR OLD.settlement_status = 'LOCKED' THEN
-            RAISE EXCEPTION 'Settlement week % is locked. Data in this week is immutable.', OLD.week_id;
+            -- Check if any financial, structural, or identity column is being modified
+            IF ROW(NEW.total_net_rent_billed, NEW.total_platform_earnings, NEW.total_cash_collected,
+                   NEW.total_platform_incentives, NEW.total_adjustments, NEW.total_challans,
+                   NEW.total_accidents, NEW.total_tds, NEW.total_dead_mile_penalty,
+                   NEW.current_week_os, NEW.previous_outstanding, NEW.amount_paid_during_week,
+                   NEW.prior_period_adjustments, NEW.security_deposit_target, NEW.security_deposit_paid,
+                   NEW.deposit_deduction_current_week, NEW.pending_deposit, NEW.total_outstanding,
+                   NEW.net_bank_payout, NEW.net_amount_to_collect, NEW.settlement_status,
+                   NEW.allotted_cars_count, NEW.total_onroad_days, NEW.total_trips,
+                   NEW.week_id, NEW.partner_id)
+               IS DISTINCT FROM
+               ROW(OLD.total_net_rent_billed, OLD.total_platform_earnings, OLD.total_cash_collected,
+                   OLD.total_platform_incentives, OLD.total_adjustments, OLD.total_challans,
+                   OLD.total_accidents, OLD.total_tds, OLD.total_dead_mile_penalty,
+                   OLD.current_week_os, OLD.previous_outstanding, OLD.amount_paid_during_week,
+                   OLD.prior_period_adjustments, OLD.security_deposit_target, OLD.security_deposit_paid,
+                   OLD.deposit_deduction_current_week, OLD.pending_deposit, OLD.total_outstanding,
+                   OLD.net_bank_payout, OLD.net_amount_to_collect, OLD.settlement_status,
+                   OLD.allotted_cars_count, OLD.total_onroad_days, OLD.total_trips,
+                   OLD.week_id, OLD.partner_id) THEN
+                RAISE EXCEPTION 'Settlement week % is locked. Financial data in this week is immutable.', OLD.week_id;
+            END IF;
+
+            -- Financial columns are 100% identical: allow updating non-financial banking reconciliation fields
+            -- (e.g. bank_utr_reference, payout_account_number, payout_ifsc, updated_at)
+            RETURN NEW;
         END IF;
 
         RETURN NEW;
