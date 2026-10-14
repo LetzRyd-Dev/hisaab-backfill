@@ -52,7 +52,8 @@ BEGIN
     SELECT is_locked, week_start, week_end, settlement_year, settlement_week, lock_cutoff_at
     INTO v_is_locked, v_week_start, v_week_end, v_year, v_week_num, v_lock_cutoff_at
     FROM public.hisaab_settlement_weeks
-    WHERE week_id = p_week_id;
+    WHERE week_id = p_week_id
+    FOR UPDATE;
 
     -- If lock_cutoff_at is NULL, calculate Monday 12:00 PM (Noon) IST:
     -- Settlement week ends Sunday (v_week_end). Following Monday noon is (v_week_end + 1 day) at 12:00 PM IST.
@@ -133,8 +134,8 @@ BEGIN
         SELECT 
             partner_id,
             COALESCE(SUM(CASE 
-                WHEN UPPER(COALESCE(polarity, 'DEBIT')) = 'CREDIT' THEN -ABS(amount) 
-                WHEN UPPER(COALESCE(polarity, 'DEBIT')) = 'DEBIT' THEN ABS(amount) 
+                WHEN UPPER(TRIM(COALESCE(polarity, 'DEBIT'))) IN ('CREDIT', 'CR') THEN -ABS(amount) 
+                WHEN UPPER(TRIM(COALESCE(polarity, 'DEBIT'))) IN ('DEBIT', 'DR') THEN ABS(amount) 
                 ELSE 0.00 
             END), 0.00) AS prior_period_adjustments
         FROM public.hisaab_adjustments_ledger
@@ -150,8 +151,8 @@ BEGIN
         SELECT 
             partner_id,
             COALESCE(SUM(CASE 
-                WHEN UPPER(COALESCE(polarity, 'DEBIT')) = 'CREDIT' THEN -ABS(amount) 
-                WHEN UPPER(COALESCE(polarity, 'DEBIT')) = 'DEBIT' THEN ABS(amount) 
+                WHEN UPPER(TRIM(COALESCE(polarity, 'DEBIT'))) IN ('CREDIT', 'CR') THEN -ABS(amount) 
+                WHEN UPPER(TRIM(COALESCE(polarity, 'DEBIT'))) IN ('DEBIT', 'DR') THEN ABS(amount) 
                 ELSE 0.00 
             END), 0.00) AS current_ledger_adjustments
         FROM public.hisaab_adjustments_ledger
@@ -200,10 +201,17 @@ BEGIN
                 ELSE 0.00
             END AS pending_deposit,
             
-            -- Resolved metadata from opening balances (for inactive partners)
-            COALESCE(op.remarks::json->>'city', prev_op.remarks::json->>'city') AS op_city,
-            COALESCE(op.remarks::json->>'name', prev_op.remarks::json->>'name') AS op_name,
-            COALESCE(op.remarks::json->>'type', prev_op.remarks::json->>'type') AS op_type
+            -- Resolved metadata from opening balances and prior week (for inactive partners)
+            COALESCE(op.remarks::json->>'city', prev_op.remarks::json->>'city', pw.city) AS op_city,
+            COALESCE(op.remarks::json->>'name', prev_op.remarks::json->>'name', pw.partner_name) AS op_name,
+            COALESCE(op.remarks::json->>'type', prev_op.remarks::json->>'type', pw.partner_type) AS op_type,
+            pw.payout_account_number AS prev_payout_account_number,
+            pw.payout_ifsc AS prev_payout_ifsc,
+            COALESCE(
+                (op.remarks::json->>'deposit_paid')::numeric,
+                (prev_op.remarks::json->>'deposit_paid')::numeric,
+                pw.security_deposit_paid
+            ) AS deposit_paid_baseline
         FROM (
             SELECT partner_id FROM veh_summary
             UNION
@@ -218,7 +226,7 @@ BEGIN
             SELECT partner_id FROM public.hisaab_partner_weekly 
             WHERE v_enable_roll_forward = TRUE 
               AND week_id = v_prev_week_id 
-              AND total_outstanding <> 0.00
+              AND (total_outstanding <> 0.00 OR pending_deposit > 0.00)
             UNION
             SELECT partner_id FROM public.hisaab_partner_weekly
             WHERE week_id = p_week_id
@@ -320,8 +328,15 @@ BEGIN
         COALESCE(pd.previous_outstanding, 0.00) AS previous_outstanding,
         COALESCE(ep.amount_paid_during_week, 0.00) AS amount_paid_during_week,
         COALESCE(pa.prior_period_adjustments, 0.00) AS prior_period_adjustments,
-        COALESCE(dr.security_deposit, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END) AS security_deposit_target,
-        GREATEST(0.00, COALESCE(dr.security_deposit, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END) - COALESCE(pd.pending_deposit, 0.00)) AS security_deposit_paid,
+        COALESCE(
+            dr.security_deposit,
+            CASE WHEN pd.deposit_paid_baseline IS NOT NULL THEN (pd.deposit_paid_baseline + COALESCE(pd.pending_deposit, 0.00)) ELSE NULL END,
+            CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END
+        ) AS security_deposit_target,
+        COALESCE(
+            pd.deposit_paid_baseline,
+            GREATEST(0.00, COALESCE(dr.security_deposit, CASE WHEN ap.partner_id ILIKE '%IP%' OR ap.partner_id ILIKE '%OP%' THEN 25000.00 ELSE 5000.00 END) - COALESCE(pd.pending_deposit, 0.00))
+        ) AS security_deposit_paid,
         0.00 AS deposit_deduction_current_week,
         COALESCE(pd.pending_deposit, 0.00) AS pending_deposit,
         
@@ -354,8 +369,8 @@ BEGIN
             THEN 'PARTIAL'
             ELSE 'OPEN'
         END AS settlement_status,
-        dr.account_number AS payout_account_number,
-        dr.ifsc_code AS payout_ifsc,
+        COALESCE(dr.account_number, pd.prev_payout_account_number) AS payout_account_number,
+        COALESCE(dr.ifsc_code, pd.prev_payout_ifsc) AS payout_ifsc,
         CURRENT_TIMESTAMP AS updated_at
     FROM all_partners ap
     LEFT JOIN veh_summary v ON ap.partner_id = v.partner_id
