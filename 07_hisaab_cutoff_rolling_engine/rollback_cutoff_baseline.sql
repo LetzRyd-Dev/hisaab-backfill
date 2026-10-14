@@ -19,15 +19,15 @@ BEGIN;
 DELETE FROM public.hisaab_partner_opening_balances 
 WHERE effective_week_id = 'CY26WK41';
 
--- 2. Clean up any partner weekly ledger rows generated for CY26WK41
-DELETE FROM public.hisaab_partner_weekly 
-WHERE week_id = 'CY26WK41' AND settlement_status IN ('DRAFT', 'OPEN');
-
--- 3. Reset lock threshold on CY26WK41 in hisaab_settlement_weeks
+-- 2. Unlock settlement week first so trigger permits cleanup
 UPDATE public.hisaab_settlement_weeks
 SET is_locked = FALSE,
     locked_at = NULL,
     locked_by = NULL
+WHERE week_id = 'CY26WK41';
+
+-- 3. Clean up partner weekly ledger rows generated for CY26WK41
+DELETE FROM public.hisaab_partner_weekly 
 WHERE week_id = 'CY26WK41';
 
 -- 4. Revert system config to standby

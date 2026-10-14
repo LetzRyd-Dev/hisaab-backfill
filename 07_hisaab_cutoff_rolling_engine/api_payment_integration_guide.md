@@ -119,26 +119,32 @@ UPDATE public.hisaab_partner_weekly pw
 SET 
     amount_paid_during_week = pw.amount_paid_during_week + :paid_amount,
     
-    -- Real-time total outstanding calculation: (Gross Dues) - (Updated Payments)
-    total_outstanding = GREATEST(0.00, 
+    -- Real-time total outstanding calculation: signed net balance (preserves advance credits)
+    total_outstanding = ROUND(
         (pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) 
-        - (pw.amount_paid_during_week + :paid_amount)
+        - (pw.amount_paid_during_week + :paid_amount),
+        2
     ),
     
-    net_amount_to_collect = GREATEST(0.00, 
+    net_amount_to_collect = GREATEST(0.00, ROUND(
         (pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) 
-        - (pw.amount_paid_during_week + :paid_amount)
-    ),
-    
-    net_bank_payout = ABS(LEAST(0.00, 
-        (pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) 
-        - (pw.amount_paid_during_week + :paid_amount)
+        - (pw.amount_paid_during_week + :paid_amount),
+        2
     )),
     
+    net_bank_payout = CASE 
+        WHEN ROUND((pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) - (pw.amount_paid_during_week + :paid_amount), 2) < 0.00
+        THEN ABS(ROUND((pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) - (pw.amount_paid_during_week + :paid_amount), 2))
+        ELSE 0.00
+    END,
+    
     settlement_status = CASE 
-        WHEN (pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) <= (pw.amount_paid_during_week + :paid_amount) 
-             THEN 'settled'
-        ELSE 'to_collect'
+        WHEN ROUND((pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) - (pw.amount_paid_during_week + :paid_amount), 2) = 0.00 
+             THEN 'SETTLED'
+        WHEN (pw.amount_paid_during_week + :paid_amount) > 0.00 
+             AND ROUND((pw.current_week_os + pw.previous_outstanding + pw.prior_period_adjustments) - (pw.amount_paid_during_week + :paid_amount), 2) > 0.00
+             THEN 'PARTIAL'
+        ELSE 'OPEN'
     END,
     
     updated_at = CURRENT_TIMESTAMP

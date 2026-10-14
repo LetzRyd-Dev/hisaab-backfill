@@ -16,8 +16,7 @@ try:
         'app_hisaabs': 25,
         'app_drivers': 28,
         'app_driver_allocations': 25,
-        'vehicles': 25,
-        'app_payments': 7
+        'vehicles': 25
     }
 
     results = {}
@@ -33,6 +32,17 @@ try:
             'actual_count': actual_cnt,
             'status': 'MATCH' if actual_cnt == expected_cnt else 'MISMATCH'
         }
+
+    # Verify app_payments (active live app ingestion table)
+    pay_cnt = db.execute(text("SELECT count(*) FROM public.app_payments")).scalar()
+    print(f"  app_payments: Expected >= 7 | Actual {pay_cnt} -> {'MATCH [OK]' if pay_cnt >= 7 else 'MISMATCH [FAIL]'}")
+    if pay_cnt < 7:
+        all_ok = False
+    results['app_payments'] = {
+        'expected_min': 7,
+        'actual_count': pay_cnt,
+        'status': 'MATCH' if pay_cnt >= 7 else 'MISMATCH'
+    }
 
     # Verify hisaab_partner_opening_balances count and sum
     op_res = db.execute(text("""

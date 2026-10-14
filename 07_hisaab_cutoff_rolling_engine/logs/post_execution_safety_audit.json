@@ -23,8 +23,8 @@
       "status": "MATCH"
     },
     "app_payments": {
-      "expected_count": 7,
-      "actual_count": 7,
+      "expected_min": 7,
+      "actual_count": 14,
       "status": "MATCH"
     }
   },

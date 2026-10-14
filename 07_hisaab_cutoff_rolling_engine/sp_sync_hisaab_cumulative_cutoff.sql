@@ -132,7 +132,11 @@ BEGIN
     prior_adj AS (
         SELECT 
             partner_id,
-            COALESCE(SUM(CASE WHEN UPPER(polarity) = 'DEBIT' THEN ABS(amount) ELSE -ABS(amount) END), 0.00) AS prior_period_adjustments
+            COALESCE(SUM(CASE 
+                WHEN UPPER(COALESCE(polarity, 'DEBIT')) = 'CREDIT' THEN -ABS(amount) 
+                WHEN UPPER(COALESCE(polarity, 'DEBIT')) = 'DEBIT' THEN ABS(amount) 
+                ELSE 0.00 
+            END), 0.00) AS prior_period_adjustments
         FROM public.hisaab_adjustments_ledger
         WHERE settlement_week_id = p_week_id 
           AND is_prior_period = TRUE
@@ -145,7 +149,11 @@ BEGIN
     current_ledger_adj AS (
         SELECT 
             partner_id,
-            COALESCE(SUM(CASE WHEN UPPER(polarity) = 'DEBIT' THEN ABS(amount) ELSE -ABS(amount) END), 0.00) AS current_ledger_adjustments
+            COALESCE(SUM(CASE 
+                WHEN UPPER(COALESCE(polarity, 'DEBIT')) = 'CREDIT' THEN -ABS(amount) 
+                WHEN UPPER(COALESCE(polarity, 'DEBIT')) = 'DEBIT' THEN ABS(amount) 
+                ELSE 0.00 
+            END), 0.00) AS current_ledger_adjustments
         FROM public.hisaab_adjustments_ledger
         WHERE settlement_week_id = p_week_id 
           AND is_prior_period = FALSE
@@ -284,12 +292,12 @@ BEGIN
         COALESCE(v.total_platform_earnings, 0.00) AS total_platform_earnings,
         COALESCE(v.total_cash_collected, 0.00) AS total_cash_collected,
         COALESCE(v.total_platform_incentives, 0.00) AS total_platform_incentives,
-        (COALESCE(v.total_adjustments, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) AS total_adjustments,
+        ROUND(COALESCE(v.total_adjustments, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00), 2) AS total_adjustments,
         COALESCE(v.total_challans, 0.00) AS total_challans,
         COALESCE(v.total_accidents, 0.00) AS total_accidents,
         COALESCE(v.total_tds, 0.00) AS total_tds,
         COALESCE(v.total_dead_mile_penalty, 0.00) AS total_dead_mile_penalty,
-        COALESCE(v.current_week_os, 0.00) AS current_week_os,
+        ROUND(COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00), 2) AS current_week_os,
         COALESCE(pd.previous_outstanding, 0.00) AS previous_outstanding,
         COALESCE(ep.amount_paid_during_week, 0.00) AS amount_paid_during_week,
         COALESCE(pa.prior_period_adjustments, 0.00) AS prior_period_adjustments,
@@ -299,26 +307,32 @@ BEGIN
         0.00 AS pending_deposit,
         
         -- Net Signed Balance: preserves advance payments (<0) and debts (>0)
-        ((COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00)) 
-         - COALESCE(ep.amount_paid_during_week, 0.00)
+        ROUND(
+            (COALESCE(pd.previous_outstanding, 0.00) 
+             + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) 
+             + COALESCE(pa.prior_period_adjustments, 0.00)) 
+            - COALESCE(ep.amount_paid_during_week, 0.00), 
+            2
         ) AS total_outstanding,
         
         -- Net Bank Payout (when earnings or advance payments exceed rent + debt)
         CASE 
-            WHEN ((COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)) < 0.00
-            THEN ABS((COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00))
+            WHEN ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) < 0.00
+            THEN ABS(ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2))
             ELSE 0.00
         END AS net_bank_payout,
         
         -- Net Amount to Collect (when driver owes company)
         GREATEST(0.00, 
-            (COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00)) 
-            - COALESCE(ep.amount_paid_during_week, 0.00)
+            ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2)
         ) AS net_amount_to_collect,
         
         CASE 
-            WHEN ((COALESCE(pd.previous_outstanding, 0.00) + COALESCE(v.current_week_os, 0.00) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)) = 0.00
+            WHEN ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) = 0.00
             THEN 'SETTLED'
+            WHEN COALESCE(ep.amount_paid_during_week, 0.00) > 0.00
+                 AND ROUND(((COALESCE(pd.previous_outstanding, 0.00) + (COALESCE(v.current_week_os, 0.00) + COALESCE(cla.current_ledger_adjustments, 0.00)) + COALESCE(pa.prior_period_adjustments, 0.00)) - COALESCE(ep.amount_paid_during_week, 0.00)), 2) > 0.00
+            THEN 'PARTIAL'
             ELSE 'OPEN'
         END AS settlement_status,
         dr.account_number AS payout_account_number,
@@ -356,16 +370,19 @@ BEGIN
         security_deposit_paid = EXCLUDED.security_deposit_paid,
         
         -- Recalculate signed balance
-        total_outstanding = (EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00),
+        total_outstanding = ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2),
         net_bank_payout = CASE 
             WHEN (EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)) < 0.00
-            THEN ABS(EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00))
+            THEN ABS(ROUND(EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2))
             ELSE 0.00 
         END,
-        net_amount_to_collect = GREATEST(0.00, (EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)),
+        net_amount_to_collect = GREATEST(0.00, ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2)),
         settlement_status = CASE 
-            WHEN ((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00)) = 0.00
+            WHEN ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2) = 0.00
             THEN 'SETTLED'
+            WHEN COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00) > 0.00
+                 AND ROUND((EXCLUDED.previous_outstanding + EXCLUDED.current_week_os + EXCLUDED.prior_period_adjustments) - COALESCE(public.hisaab_partner_weekly.amount_paid_during_week, 0.00), 2) > 0.00
+            THEN 'PARTIAL'
             ELSE 'OPEN'
         END,
         payout_account_number = COALESCE(EXCLUDED.payout_account_number, public.hisaab_partner_weekly.payout_account_number),
